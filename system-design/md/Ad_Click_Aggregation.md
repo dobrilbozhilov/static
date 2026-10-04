@@ -42,6 +42,38 @@ flowchart TD
 обслужва дашбордите само от агрегатите, никога от суровите събития. Всичко е пунктирано, защото
 нито един клик не чака нищо: това е система от асинхронни потоци с един синхронен път за четене.
 
+## Системен дизайн накратко
+
+Един поток от сурови кликове и две пътеки от него: гореща (stream, приблизително, веднага) и студена (batch от lake-а, точно, за фактурата). 6 сървиса, почти всичко асинхронно; единственият синхронен път е Query API-то, което чете само готови агрегати.
+
+### Сървиси
+
+| # | Сървис | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **Dedup + fraud filter** | `click_id` в RocksDB state с TTL 24 h (Bloom отпред); фрод правила и скор, флаг вместо изхвърляне | Kafka consumer `click-events` → producer `clicks-clean` |
+| 2 | **Stream aggregator** (Flink) | Tumbling 1-min прозорци по `(ad_id, minute)` в event time, watermark 5-10 s, allowed lateness 60 s; излъчва пълния брой на прозореца | Kafka consumer по `ad_id`; checkpoint на 30 s в S3; idempotent upsert в Aggregates store; late → `late-clicks` |
+| 3 | **Correction worker** | Инкрементира минутата за много закъснели събития | Kafka consumer `late-clicks`; upsert delta |
+| 4 | **Top-K merger** | Слива per-partition heap-овете в глобален top 100 на минута | Получава K кандидати от всяка партиция; пише един ред на минута |
+| 5 | **Batch recompute** (Spark) | Нощно преизчислява деня от lake-а със същата библиотека, пише billing агрегати, reconciliation срещу горещите | Чете Parquet от S3; пише Billing DB |
+| 6 | **Query API** | Count по реклама и диапазон, top-K, флаг `final` | REST от дашборда; чете Aggregates store |
+
+### Хранилища
+
+| Компонент | Роля |
+| --- | --- |
+| Kafka | `click-events` (партиция по `ad_id`, 7 дни), `clicks-clean`, `late-clicks` |
+| Data lake (S3, Parquet по час) | Сурови събития за години; източник за batch и backfill |
+| Checkpoint store (S3) | Operator state + offsets атомарно |
+| Aggregates store (Cassandra или ClickHouse) | `(ad_id, minute) → count`, top-K редове |
+| Billing DB (Postgres) | Окончателни числа, reconciliation |
+
+### Комуникация, backpressure и патерни
+
+- **Асинхронно:** всичко до Query API-то; нито един клик не чака нищо.
+- **Синхронно:** само `GET /ads/:id/clicks` от готовите агрегати.
+- **Backpressure:** Kafka с 7 дни ретенция поглъща пикове и бъгове (replay); consumer lag и watermark lag са метриките за скалиране; salting на горещ `ad_id` в 16 подключа с two-phase aggregation; партиции 2-3 пъти повече от task-овете.
+- **Патерни:** event time + watermark + allowed lateness, exactly-once чрез checkpoint (state + offset) + идемпотентен upsert по ключ на прозореца, дедупликация по `click_id`, lambda архитектура с обща библиотека и reconciliation, per-partition heap + merge за top-K, backfill чрез нов consumer group и `offsetsForTimes`.
+
 ## Описание на архитектурата стъпка по стъпка
 
 ### 1. Събитието и партиционирането

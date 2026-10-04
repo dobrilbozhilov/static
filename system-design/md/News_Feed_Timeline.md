@@ -34,6 +34,39 @@ sorted set от Redis, добавя постовете на малкото celeb
 двата източника, подрежда ги през Ranking Service и накрая "хидратира" ID-тата в цели постове от
 кеша и броячите.
 
+## Системен дизайн накратко
+
+Един въпрос решава всичко: работата при писане или при четене. Отговорът е хибрид: fan-out on write за нормални автори, pull за celebrity акаунти, сливане при четене. 5 сървиса и много Redis.
+
+### Сървиси
+
+| # | Сървис | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **API Gateway** | Auth, rate limit | REST от клиента |
+| 2 | **Post Service** | Валидира и записва поста, публикува събитие | INSERT в Post DB; Kafka `post-created`; връща 201 веднага |
+| 3 | **Fan-out Service** | За автори под около 100k последователи: `ZADD post_id` в inbox-а на всеки активен последовател; backfill при нов follow | Kafka consumer group; Social Graph и Redis Feed Cache |
+| 4 | **Feed Service** | Взима inbox-а от Redis, добавя pull на celebrity постовете, слива, ранкира, хидратира с 2 MGET, филтър за видимост | REST; Redis, Post DB, Ranking Service с timeout 50 ms |
+| 5 | **Ranking Service** | ML оценка на стотици кандидати с офлайн изчислени признаци | Викан от Feed Service; чете Feature Store |
+
+### Хранилища
+
+| Компонент | Роля |
+| --- | --- |
+| Post DB (Cassandra) | Постове по `post_id` и `posts_by_author` за pull |
+| Redis Feed Cache | `feed:<user_id>` sorted set от 500 post_id, шард по `user_id`, TTL 30 дни |
+| Post Cache (Redis) | Тела на постовете за hydration |
+| Social Graph (Redis или graph DB) | followers, following, set `celebrities` |
+| Counters (Redis) | Лайкове и коментари, write-behind към Post DB |
+| Kafka | `post-created`, `follow-changed` |
+| Object Storage + CDN | Медия, качена директно |
+
+### Комуникация, backpressure и патерни
+
+- **Синхронно:** REST за публикуване (до записа в Post DB) и за четене на feed-а. Ranking е sync, но с timeout budget и fallback към хронологичен ред.
+- **Асинхронно:** fan-out през Kafka; потребителят не чака 200 записа в Redis. Броячите се флъшват write-behind.
+- **Backpressure:** Kafka поглъща пиковете на fan-out-а и позволява worker-ите да наваксват; celebrity постовете изобщо не се fan-out-ват; неактивните потребители се пропускат; локална агрегация на лайкове (INCRBY на 100 ms) срещу hot key.
+- **Патерни:** хибриден push/pull според power-law разпределението, ID-та в кеша + hydration (не копия), cursor пагинация по score, дедупликация чрез `ZADD` member, производен кеш с rebuild от Post DB при загуба, graceful degradation на ranking-а.
+
 ## Описание на архитектурата стъпка по стъпка
 
 ### 1. Fan-out on write (push модел)

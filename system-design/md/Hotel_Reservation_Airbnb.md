@@ -39,6 +39,40 @@ outbox. Събитието инвалидира кеша на наличност
 Job връща инвентара на изтеклите hold-ове. Двете пътеки са нарочно разделени: търсенето може да
 показва стая, която току-що е продадена, резервацията не може да продаде стая, която няма.
 
+## Системен дизайн накратко
+
+Два нарочно разделени пътя: търсене (100 пъти по-често, eventually consistent, кеш + Elasticsearch) и резервация (рядко, строго консистентно, един условен UPDATE в Postgres). 8 сървиса; инвентарът е по `(hotel_id, room_type_id, date)`, не по физическа стая.
+
+### Сървиси
+
+| # | Сървис | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **API Gateway** | Auth, rate limit | REST |
+| 2 | **Search Service** | Филтри, гео, фасети, ranking, наличност по дати от кеш | Elasticsearch; Redis `avail:*` с TTL 60 s; sync към Pricing |
+| 3 | **Pricing Service** | Динамично ценообразуване по сезон, заетост, ден; преизчислява на партиди | Викан от Search; Pricing DB |
+| 4 | **Reservation Service** | `UPDATE inventory SET available - 1 WHERE dates AND available >= 1` за всички нощи, HELD с `expires_at`, идемпотентност по `reservation_id` от клиента, state machine | SQL транзакция в Inventory DB; sync към Payment; outbox → Kafka |
+| 5 | **Payment Service** | Authorize при потвърждение, capture по политика | Виж Payment System; PSP |
+| 6 | **Worker-и** | Поща, синхронизация с PMS / channel manager, аналитика | Kafka consumer group; API към хотелските системи |
+| 7 | **Reaper Job** | На всяка минута връща инвентара на изтекли HELD | Един инстанс с lease в Redis; SQL |
+| 8 | **Hotel Admin Portal** | Цени, наличност, `overbooking_cap` | SQL към Inventory DB |
+
+### Хранилища
+
+| Компонент | Роля |
+| --- | --- |
+| Inventory DB (Postgres, шард по `hotel_id`) | `inventory`, `reservations`, `reservation_events` (append-only одит), `rates` |
+| Redis | Availability cache, инвалидиран от събитие; lease за reaper-а |
+| Elasticsearch | Хотели, удобства, локация, текст |
+| Kafka | `reservation-events` през outbox; инвалидира кеша, храни worker-ите |
+| PMS / Channel Manager (външни) | Рецепция и други канали за продажба |
+
+### Комуникация, backpressure и патерни
+
+- **Синхронно:** търсене (кеш, Elasticsearch, Pricing) и резервация (една транзакция + плащане).
+- **Асинхронно:** outbox → Kafka → инвалидация на кеша, PMS sync, поща; reaper на минута.
+- **Backpressure:** търсенето никога не докосва Inventory DB (кеш с TTL поглъща 600 RPS); Pricing се смята на партиди, не при всяко търсене; синхронизацията с каналите е eventually consistent, а overbooking cap поглъща разминаванията.
+- **Патерни:** CQRS разделение на търсене и резервация, условен UPDATE (или `FOR UPDATE` с `ORDER BY date` срещу deadlock), hold с изтичане + reaper, идемпотентен INSERT `ON CONFLICT`, Transactional Outbox, event sourcing за одит, overbooking като бизнес параметър, single-shard транзакции по `hotel_id`.
+
 ## Описание на архитектурата стъпка по стъпка
 
 ### 1. Моделът на инвентара: защо не ред на стая

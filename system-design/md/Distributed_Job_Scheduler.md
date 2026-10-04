@@ -40,6 +40,36 @@ flowchart TD
 чисти след паднали worker-и, а събитията за всяко изпълнение захранват мониторинга и известията.
 Пунктираните стрелки са асинхронна работа, която никой не чака.
 
+## Системен дизайн накратко
+
+Обемът е малък (280 изпълнения/сек), трудното е "точно веднъж и навреме" при два планировчика, паднал worker и разминаващи се часовници. 6 сървиса: контролен път (API + един активен leader), изпълнение (durable опашка + worker-и) и чистене (reaper).
+
+### Сървиси
+
+| # | Сървис | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **Scheduler API** | CRUD на job-ове, валидация на cron и timezone, `run-now`, история на runs | REST; SQL към Postgres |
+| 2 | **Scheduler leader** (един активен) | На всяка секунда `SELECT due ... FOR UPDATE SKIP LOCKED`, създава run `QUEUED`, смята `next_run_at`, публикува | Lease в Redis (`SET NX PX 15000`, renew на 5 s); Kafka `jobs-due` с ключ `job_id` |
+| 3 | **Scheduler standby** | Чака lease-а; поема при изтичане с нов epoch | Опитва `SET NX` в Redis |
+| 4 | **Worker pool** | Дедупликира по `run_id` (SETNX), условен `UPDATE run RUNNING WHERE QUEUED`, вика целта с `Idempotency-Key = run_id`, heartbeat на 10 s, timeout с `AbortController` | Kafka consumer group; HTTPS или gRPC към целевия сървис; SQL за статус |
+| 5 | **Reaper** | Изтекли heartbeat-и и timeout-и → `TIMED_OUT`, re-enqueue с backoff; misfire политики | Периодичен, с lease; SQL; publish retry в Kafka |
+| 6 | **Observability + Notification** | Lateness, дълбочина на опашка, SLA miss, canary job; известие при fail | Kafka consumer на `run-events` |
+
+### Хранилища
+
+| Компонент | Роля |
+| --- | --- |
+| Postgres | `jobs` с индекс `(enabled, next_run_at)`, `runs` партиционирани по месец, `run_events`; системата на истината |
+| Redis | Leader lease с epoch, dedup на `run_id`, опционален ZSET за предстоящите 5 минути |
+| Kafka (или SQS / JetStream) | `jobs-due` по приоритет (critical, default, bulk), `run-events` |
+
+### Комуникация, backpressure и патерни
+
+- **Синхронно:** REST за управление; worker → целеви сървис.
+- **Асинхронно:** leader → Kafka → worker-и; worker-и → `run-events` → мониторинг. Планировчикът не изпълнява, само публикува.
+- **Backpressure:** durable опашката разкача секундното сканиране от минутните изпълнения; worker-ите скалират по consumer lag; квота на тенант в полет; jitter за "1 млн. job-а в 00:00"; `concurrency_policy` (`forbid`, `replace`) срещу натрупване на дълги job-ове.
+- **Патерни:** leader с lease + fencing epoch, `FOR UPDATE SKIP LOCKED` като гаранция на ниво ред, идемпотентност на три слоя (Redis → условен UPDATE → идемпотентна цел), heartbeat + reaper, misfire политики, UTC навсякъде с DST-aware библиотека, партиции по време вместо DELETE. Temporal отговаря на "как да стигнем до края", не на "кога".
+
 ## Описание на архитектурата стъпка по стъпка
 
 ### 1. Какво е един job

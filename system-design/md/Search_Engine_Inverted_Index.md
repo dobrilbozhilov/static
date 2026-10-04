@@ -41,6 +41,40 @@ flowchart TD
 сливане на top-K, скъпо преподреждане само на няколкостотин кандидата и накрая изтегляне на самите
 документи за snippet-и. Пунктираните линии са фонова работа, плътните са в бюджета на заявката.
 
+## Системен дизайн накратко
+
+Два пътя: индексиране (Kafka → Analyzer → шард по `doc_id` → immutable сегменти) и заявка (parse → кеш → scatter-gather към всички шардове → re-rank на стотици → fetch на 10). 8 сървиса; ключовото разделение е евтино извличане върху милиони и скъпо подреждане върху стотици.
+
+### Сървиси
+
+| # | Сървис | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **Analyzer Pipeline** | Tokenize, normalize, stop words, stemming по език, forward index запис | Kafka consumer `documents`; рутира към шард по `hash(doc_id)` |
+| 2 | **Index Shards** (около 100 по 50 GB) + реплики (x2) | Буфер в паметта → refresh на 1 s → нов сегмент; merge; BM25 top 100 локално; deleted bitset | Translog като WAL; репликация на операцията; заявки от координатора |
+| 3 | **Link / Signal Jobs** | PageRank-подобен авторитет, кликове, свежест | Нощен batch → Document Signals store |
+| 4 | **API Gateway** | Auth, rate limit | REST `GET /search` |
+| 5 | **Query Processor** | Parse, spelling, синоними, пренаписване, results cache | Redis cache-aside; към Coordinator при miss |
+| 6 | **Query Coordinator** | Scatter към всички шардове, gather, heap merge на 10 000 кандидата до около 500 | Паралелни RPC към една реплика на шард; hedged requests |
+| 7 | **Re-ranker** | Learning to rank върху около 500 кандидата със стотици признаци | Чете Signals store; връща top 10 |
+| 8 | **Result Fetcher** | Snippets и полета за финалните 10 | `MGET` от Document Store |
+
+### Хранилища
+
+| Компонент | Роля |
+| --- | --- |
+| Kafka | `documents`, партиция по `doc_id` |
+| Segment files (локален SSD) | Dictionary (FST), компресирани posting lists, deleted bitset |
+| Document Store (forward index) | `doc_id → полета и текст` |
+| Document Signals | Authority, popularity, freshness за ranking |
+| Results Cache (Redis) | Нормализирана заявка → отговор, TTL до refresh |
+
+### Комуникация, backpressure и патерни
+
+- **Синхронно:** целият път на заявката в бюджет от 200 ms; 10k QPS отвън стават 1M shard заявки вътре.
+- **Асинхронно:** индексиране през Kafka, refresh и merge, нощни signal jobs.
+- **Backpressure:** results cache и filter cache пред координатора (60-80% hit); таймаут с частичен резултат от 98 шарда; по-малко и по-големи шардове; `search_after` cursor вместо offset; отделен малък "свеж" индекс за новини вместо чест refresh на основния.
+- **Патерни:** inverted index с posting lists и skip lists, immutable сегменти + merge (LSM модел), шардиране по документ (не по термин), scatter-gather с hedged requests срещу tail latency, двуфазно подреждане (BM25 retrieval → LTR re-ranking), индексът като производна структура (истината е в Postgres или S3), обновяване = delete + reindex.
+
 ## Описание на архитектурата стъпка по стъпка
 
 ### 1. Обработка на документа (analysis)

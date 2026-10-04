@@ -39,6 +39,39 @@ Service пази **какво** съществува (bucket, ключ, верс
 фоновият живот на хранилището, без който трайността е само число на слайд: scrubbing срещу тихи
 грешки на диска, repair на загубени парчета, GC на изтритото и lifecycle между класове на съхранение.
 
+## Системен дизайн накратко
+
+Два свята: Metadata Service (какво съществува, силно консистентно, малки заявки, истинското гърло) и Data Service (байтовете, immutable парчета, erasure coded по зони). 8 сървиса плюс стотици storage възли; четири от сървисите са фонови и без тях 11-те деветки трайност са само число.
+
+### Сървиси
+
+| # | Сървис | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **API Service** | S3 REST, IAM и bucket policy, quota, чексума в движение | HTTPS от SDK или presigned URL; вика Metadata и Data |
+| 2 | **Metadata Service** | bucket, key, version, chunk map; LIST като range scan по сортиран ключ; read-after-write | Силно консистентен запис в шардирана Metadata DB (кворум) |
+| 3 | **Data Service** | Реже на 64 MB парчета, чексума на парче, erasure coding 8+4, пише shards по възли | Пита Placement; паралелни записи към storage възли, чака всички ack |
+| 4 | **Placement Service** | Кои възли, в кои rack-ове и зони; обратна карта shard → chunk; кой е пълен | Викан от Data; health от възлите |
+| 5 | **Storage nodes** (около 400) | Immutable chunks на локален диск с `fsync`; малки обекти пакетирани в extents (Haystack) | RPC от Data Service; фонови четения от Scrubber и Repair |
+| 6 | **Scrubber** | Чете всички парчета на цикли от седмици и сверява чексуми (bit rot) | Фонов, с лимит на пропускливостта |
+| 7 | **Repair Service** | Възстановява загубени shards от K останали, паралелно по стотици възли за часове | Фонов; чете Placement за какво е било на падналия диск |
+| 8 | **GC Service** | Трие парчета без референции (изтрити и презаписани версии), компактира extents | Фонов, отложен с дни; чете tombstones от Metadata |
+| 9 | **Lifecycle Service** | Tiering между класове, expiration, чистене на изоставени multipart uploads | Фонов; обновява `storage_class` и chunk map транзакционно |
+
+### Хранилища
+
+| Компонент | Роля |
+| --- | --- |
+| Metadata DB (шардирана по bucket+key, сортирана) | `objects`, `chunks`, `uploads`, `nodes`; най-строгите SLO в системата |
+| Локални дискове на storage възлите | Immutable chunks и extents, без база |
+| CDN | Горещи обекти, origin fetch при miss |
+
+### Комуникация, backpressure и патерни
+
+- **Синхронно:** PUT = байтове първо (всички shards ack-нати), после метаданни; 200 чак след commit в кворум. GET = метаданни → 8 от 12 shards.
+- **Асинхронно:** scrubbing, repair, GC, lifecycle, прекодиране от репликация към erasure coding.
+- **Backpressure:** фоновите процеси работят с лимит на пропускливостта, за да не изядат I/O на горещите заявки; hot префикс се решава с ентропия в ключа или разделяне на шарда; горещ обект се обслужва от CDN и динамични реплики, не от 12-те възела.
+- **Патерни:** metadata/data разделение, immutable content-addressed chunks, erasure coding (Reed-Solomon) срещу репликация, landing зона с репликация + фонов преход към EC, чексуми на всяко ниво, versioning с delete markers, reference counting + отложен GC, multipart upload, плоско пространство с префикс listing, storage classes.
+
 ## Описание на архитектурата стъпка по стъпка
 
 ### 1. Плоско пространство от имена

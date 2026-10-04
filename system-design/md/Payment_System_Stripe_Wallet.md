@@ -42,6 +42,39 @@ idempotency key, Payment Service минава през твърдите прав
 доставчика. Ledger Service е отделен, защото парите се записват като двустранни счетоводни записи, а
 не като поле "баланс".
 
+## Системен дизайн накратко
+
+Обемът е малък (12 TPS, 120 в пик), трудното е коректност и одит. 7 сървиса около един принцип: идемпотентност на всеки хоп, двойно счетоводство вместо поле "баланс", и признание, че exactly-once не съществува. Картовите данни никога не влизат при нас.
+
+### Сървиси
+
+| # | Сървис | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **API Gateway** | Auth, rate limit, TLS | REST с `Idempotency-Key` |
+| 2 | **Payment Service** | Payment intent, state machine с условни UPDATE, идемпотентност (SETNX + UNIQUE), authorize/capture към PSP със същия ключ | Sync към Redis, Risk, PSP; SQL транзакция с outbox |
+| 3 | **Risk Service** | Твърди синхронни правила под 50 ms (блок листи, velocity, гео); асинхронен ML скоринг след това | Викан sync от Payment; async консуматор за скоринга |
+| 4 | **Ledger Service** | Двойно счетоводство: append-only записи, сумата на трансфера е нула, баланс = отчет | REST `POST /transfers` от Payment; Postgres с CHECK или тригер |
+| 5 | **Webhook Handler** | Проверява подписа на PSP, дедупликира по `event_id` (`ON CONFLICT DO NOTHING`), бърз 200, условен UPDATE по състояние | HTTPS от PSP (at-least-once, без ред) |
+| 6 | **Worker-и** | Поща, аналитика, payouts на партиди към търговци | Kafka consumer groups; payouts към PSP с ключ `merchant_id + period` |
+| 7 | **Reconciliation Job** | Нощно сравнение на ledger-а със сетълмент файла на PSP; разминаванията отиват към Ops | Batch; чете Ledger DB; пише в Ops Dashboard |
+
+### Хранилища
+
+| Компонент | Роля |
+| --- | --- |
+| Postgres | `payments`, `payment_events`, `outbox`, `payouts`; UNIQUE на idempotency ключа |
+| Ledger DB (Postgres, партиции по месец) | `ledger_entries` append-only без UPDATE/DELETE права; `account_balances` материализиран |
+| Redis | Idempotency ключове (24 h), rate limits |
+| Kafka | `payment-events` през outbox |
+| PSP (Stripe / Adyen) | Карти, 3DS, PCI обхват; външна система |
+
+### Комуникация, backpressure и патерни
+
+- **Синхронно:** клиент → Payment → Risk → PSP. Крайният статус обаче не идва от sync отговора, а от webhook.
+- **Асинхронно:** webhook-и от PSP, outbox → Kafka → worker-и, нощен reconciliation, ML скоринг.
+- **Backpressure:** circuit breaker около PSP клиента; retry с backoff само за преходни грешки; webhook endpoint-ът записва и връща 200 веднага, обработва после; payouts на партиди.
+- **Патерни:** идемпотентност на три хопа (клиент → нас → PSP → webhook), двойно счетоводство (append-only ledger), state machine с условни UPDATE, Transactional Outbox, reconciliation, optimistic locking или single writer per account за портфейли, bulkhead за риск, цели числа в минимални единици.
+
 ## Описание на архитектурата стъпка по стъпка
 
 ### 1. Pay-in: от checkout до потвърдено плащане

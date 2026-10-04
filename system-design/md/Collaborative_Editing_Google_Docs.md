@@ -73,6 +73,36 @@ flowchart LR
 позиция 1. Резултатът и при двамата е `abxyz`. Правилото "при равна позиция печели по-ниското
 client id" прави избора детерминистичен, а не случаен.
 
+## Системен дизайн накратко
+
+Един owner на документ подрежда всички операции (OT sequencer), stateless gateway-и държат сокетите, Kafka прави операциите издръжливи след факта. Само 4 сървиса, защото цялата сложност е в алгоритъма, не в броя кутии.
+
+### Сървиси
+
+| # | Сървис | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **Collab Gateway** (около 40 процеса) | Stateless WS сесии, auth при отваряне, broadcast към абонатите на `docId`, presence и курсори с coalescing | WebSocket през L4 LB; request/reply към Document Server по `doc.ops.<docId>`; Redis за presence |
+| 2 | **Document API** | Отваряне (snapshot + ops след него), споделяне, ACL, история, коментари | REST; Metadata DB; Snapshot Store; OIDC към IdP |
+| 3 | **Document Server** (40-50 процеса, owner на документ) | Държи документа в паметта, трансформира входящите операции (OT), дава версия, ack-ва | Lease в Redis с epoch; получава по subject на документа; публикува в Kafka `doc-ops` |
+| 4 | **Persist Worker** | Оп лог `(doc_id, version) → op` (идемпотентен), snapshot на всеки около 100 ops | Kafka consumer; Ops DB; S3 |
+
+### Хранилища
+
+| Компонент | Роля |
+| --- | --- |
+| Redis | Lease + epoch на документ, presence, курсори (TTL 30 s) |
+| Kafka | `doc-ops`, партиция по `docId`; лог след факта, не източник на реда |
+| Ops DB (Cassandra или Postgres) | Оп лог, историята на документа |
+| Snapshot Store (S3) | Пълен документ на версия N |
+| Metadata DB (Postgres) | Документи, ACL, коментари |
+
+### Комуникация, backpressure и патерни
+
+- **Синхронно:** клиент → gateway → owner → ack с версия; клиентът прилага локално веднага и има най-много една inflight операция.
+- **Асинхронно:** owner → Kafka → persist, snapshot, индексиране; presence отделно през Redis.
+- **Backpressure:** една inflight операция на клиент и композиране на pending; batching на изхода на 50 ms за документи с много редактори; курсорите се coalesce-ват и се пращат на 100-200 ms; fan-out е на gateway-ите, не на owner-а; лимит на едновременни редактори.
+- **Патерни:** single owner per document с lease + fencing epoch, OT (или CRDT със сървър като реле), optimistic local apply + pending queue, event sourcing (оп лог + snapshots), клиентски `client_op_id` за идемпотентност, ефимерни данни извън durable пътя, undo само на собствените операции, блокове за големи документи.
+
 ## Описание на архитектурата стъпка по стъпка
 
 ### 1. Клиентът: оптимистично прилагане и pending опашка

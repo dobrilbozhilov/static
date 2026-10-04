@@ -36,6 +36,39 @@ WebSocket връзка към Chat Service, който проверява иде
 няма живи сесии, праща push. **Персистиране и търсене** са отделни consumer group-и върху същия лог,
 така че нито едното забавя доставката.
 
+## Системен дизайн накратко
+
+Трислойно разделение: stateful слой за връзките (WS Gateway), durable лог за съобщенията (Kafka) и worker-и, които правят всичко останало. 7 сървиса, от които само WS Gateway държи състояние, и то само отворени сокети.
+
+### Сървиси
+
+| # | Сървис | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **WebSocket Gateway** (около 450 инстанции) | Държи до 50k постоянни връзки на процес, heartbeat, регистрира сесиите в Redis, следи `bufferedAmount` | WSS от клиента през L4 LB; получава доставки по Redis Pub/Sub или gRPC |
+| 2 | **API Gateway** | REST за история, login, медия upload URL | HTTPS; препраща към Chat Service |
+| 3 | **Chat Service** | Валидира, дедупликира по `client_msg_id` (SETNX), взима `seq_id` (INCR), записва в Kafka | Викан от WS Gateway; Redis; Kafka producer с `acks=all`, partition key `chat_id` |
+| 4 | **Persist Worker** | Пише историята в Cassandra на партиди, идемпотентен upsert | Kafka consumer group `persist` |
+| 5 | **Delivery Worker** | Намира сесиите на получателя (`HGETALL user_sessions`) и препраща към съответните WS сървъри | Kafka consumer group `deliver`; Redis Pub/Sub канал на сървър или gRPC |
+| 6 | **Push Worker** | Известие (не съобщението) за офлайн получатели, с coalescing | Получава от Delivery Worker; HTTPS към FCM/APNs |
+| 7 | **Search Indexer** | Индексира текст в Elasticsearch (само без E2E, Slack модел) | Kafka consumer group `index`; bulk index |
+
+### Хранилища
+
+| Компонент | Роля |
+| --- | --- |
+| Kafka | Durable лог; `SENT` чак след `acks=all`; партиция по `chat_id` пази реда |
+| Redis | Session registry (Hash на устройство), presence и typing с TTL, idempotency ключове, `seq_id` броячи |
+| Cassandra / ScyllaDB | История, partition `(chat_id, bucket)`, clustering `seq_id DESC` |
+| Elasticsearch | Пълнотекстово търсене |
+| Object Storage + CDN | Медия, качена директно с presigned URL |
+
+### Комуникация, backpressure и патерни
+
+- **Синхронно:** изпращането върви по вече отворения WebSocket (не REST); клиентът чака само `acks=all` от Kafka. REST за история и `since=<seq>` синхронизация.
+- **Асинхронно:** всичко след Kafka: три независими consumer group-а (persist, deliver, index); бавна база не бави доставката.
+- **Backpressure:** към бавен клиент по `socket.bufferedAmount` (пауза, после затваряне с "resync"); от Kafka чрез `pause()` на партицията, ако опашката към WS сървърите се напълни; Delivery commit-ва offset след изпращане, не след ACK от телефона.
+- **Патерни:** log-first (Kafka преди базата, вместо Outbox), идемпотентност с клиентски ключ, монотонен `seq_id` за ред и gap detection, at-least-once с дедупликация при получателя, хибриден fan-out (write за малки чатове, read за големи канали), heartbeat + reconnect с jitter + graceful drain.
+
 ## Описание на архитектурните патерни и детайли
 
 ### 1. Защо съобщението минава по WebSocket, а не по REST

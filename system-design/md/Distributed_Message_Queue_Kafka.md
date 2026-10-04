@@ -40,6 +40,38 @@ flowchart TD
 двете неща, които често се пропускат: tiered storage за стари сегменти и DLQ topic за отровни
 съобщения.
 
+## Системен дизайн накратко
+
+Не е опашка, а разпределен append-only лог: съобщението не се изважда при четене, всеки консуматор помни само offset. 6 вида компоненти: producer-и, брокери (лидер и follower-и на партиция), controller кворум, consumer group-и и tiered storage.
+
+### Компоненти
+
+| # | Компонент | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **Producer** | Избира партиция по `hash(key)`, събира партиди, компресира, `acks=all`, идемпотентен (pid + seq) | TCP към лидера на партицията |
+| 2 | **Broker** (лидер на партиция) | Append в активния сегмент, разреден индекс, издига high watermark след ISR | Приема produce и fetch; follower-ите теглят от него |
+| 3 | **Broker** (follower) | Реплицира чрез fetch от лидера; в ISR, ако изостава под `replica.lag.time.max.ms` | Replica fetch, pull |
+| 4 | **Controller** (KRaft кворум) | Метаданни с консенсус: кой е лидер, ISR, topics; leader election само от ISR | Raft между контролерите; известява брокерите |
+| 5 | **Consumer group** | Всяка партиция към точно един консуматор; pull от offset; commit в `__consumer_offsets`; rebalance при промяна | Fetch до high watermark; group coordinator за membership |
+| 6 | **Tiered storage** | Затворени сегменти в обектно хранилище, локалният диск пази само горещата опашка | Offload по възраст |
+
+### Хранилища
+
+| Компонент | Роля |
+| --- | --- |
+| Segment files (около 1 GB) | Append-only лог + `.index` + `.timeindex`; retention по време или размер |
+| `__consumer_offsets` | Компактиран системен topic с offset-ите |
+| Metadata log | KRaft логът на контролерите |
+| Object storage | Tiered storage за дълга ретенция |
+| DLQ topic | Отровни съобщения след N опита |
+
+### Комуникация, backpressure и патерни
+
+- **Запис:** producer → лидер → follower-и теглят → HW се вдига → ack. Подредба само в партиция.
+- **Четене:** pull, не push. Затова бавният консуматор не може да бъде залят: той изостава, а изоставането е consumer lag, основната метрика.
+- **Backpressure:** producer-ът никога не чака консуматорите (queue-based load leveling); lag над retention означава загуба, алармата звъни много преди това; `acks=all` + `min.insync.replicas` отказват запис, вместо да го загубят.
+- **Патерни:** партиционирана репликация с лидер и ISR, high watermark, идемпотентен producer и транзакции (exactly-once само вътре в Kafka), log compaction като changelog, zero-copy и page cache, cooperative rebalance, DLQ и retry topics, построени отгоре. Външната гаранция винаги е идемпотентен sink.
+
 ## Описание на архитектурата стъпка по стъпка
 
 ### 1. Topic, партиция, лог

@@ -47,6 +47,37 @@ flowchart TD
 
 Смесването им в едно хранилище е най-честата грешка в отговорите.
 
+## Системен дизайн накратко
+
+Две напълно различни системи под един продукт: метаданни (малки, много заявки, строга консистентност, Postgres) и блокове (петабайти, малко заявки, immutable, S3). 5 сървиса плюс клиент, който е пълноправен участник с локален SQLite индекс.
+
+### Сървиси
+
+| # | Сървис | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **Клиент** | File watcher, chunking (content-defined, около 4 MB), SHA-256, локален индекс, опашка от операции, конфликти по `base_version` | REST към API; PUT директно в S3; long poll / WebSocket към Notification |
+| 2 | **API Gateway** | Auth, rate limit | HTTPS REST |
+| 3 | **Metadata Service** | Дърво, версии, права, `has-chunks`, `commit` (нова версия + journal ред в една транзакция), `delta` по cursor, конфликти (409) | SQL към Postgres; Kafka `file-changed` |
+| 4 | **Block Service** | Издава presigned URL-и за блокове по хеш | REST; S3 |
+| 5 | **Notification Service** (около 500 инстанции) | Събужда другите устройства: "има промени" | Kafka consumer; long poll / WebSocket към клиентите |
+| 6 | **GC Worker** | Трие блокове с `ref_count = 0` с отлагане от дни | Чете Postgres; DELETE в S3 |
+
+### Хранилища
+
+| Компонент | Роля |
+| --- | --- |
+| Postgres (шард по `namespace_id`) | `files`, `versions`, `chunks` с `ref_count`, `journal` с монотонен cursor |
+| S3 | Immutable блокове, ключ = хеш; `ref_count` решава кога се трие |
+| Kafka | `file-changed` към Notification |
+| CDN | Кеш пред S3 за теглене на блокове |
+
+### Комуникация, backpressure и патерни
+
+- **Синхронно:** REST за метаданни (35k QPS); блоковете минават директно клиент ↔ S3, никога през приложните сървъри.
+- **Асинхронно:** commit → Kafka → Notification → wake up → клиентът дърпа дельтата по cursor. Push само за "има нещо", данните са pull.
+- **Backpressure:** клиентски лимит на пропускливостта и приоритизация (малки файлове първи); long poll вместо polling от 100 млн. устройства; GC е отложен и фонов.
+- **Патерни:** metadata/data разделение, content-addressed storage и дедупликация, content-defined chunking (rolling hash), presigned URL, cursor-based delta (не timestamp), optimistic locking по `base_version` и conflicted copy вместо сливане, namespace като shard key за споделени папки, reference counting + отложен GC, LAN sync.
+
 ## Описание на архитектурата стъпка по стъпка
 
 ### 1. Chunking (разбиване на блокове)

@@ -39,6 +39,36 @@ flowchart TD
 през отделен процес, не през кода на всяка заявка. Warmup worker-ът пълни кеша след рестарт, за да
 няма cold start лавина към базата.
 
+## Системен дизайн накратко
+
+Клъстер от еднонишкови възли, които делят 16 384 hash slot-а, всеки с асинхронна реплика, плюс два малки сървиса около него: Invalidator, който държи кеша верен спрямо базата, и Warmup worker срещу cold start. Кешът е производна структура: трябва да може да се възстанови от истината, не от собствения си диск.
+
+### Компоненти
+
+| # | Компонент | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **Cluster client** (в приложението) | Знае картата slot → възел, следва `MOVED` и `ASK`, pipelining; L1 локален кеш за горещи ключове | RESP по TCP към правилния primary |
+| 2 | **Primary възли** (8 при 1M ops/s) | Event loop, една команда наведнъж (атомарност безплатно), LRU/LFU eviction при `maxmemory`, TTL | Приемат четене и запис за своите слотове; async replication stream към репликата |
+| 3 | **Replica възли** | Failover кандидат; четене с `READONLY` при нужда | Теглят replication stream; повишават се от кворум |
+| 4 | **Cluster bus** | Gossip, failure detection (`PFAIL` → `FAIL`), configuration epoch, slot ownership | Възел към възел, отделен порт |
+| 5 | **Invalidator** | След commit в базата прави `DEL` на ключа (delayed double delete) | CDC или outbox събития от базата → Redis |
+| 6 | **Warmup worker** | Пълни топ ключовете след рестарт или failover | `MSET` на партиди от базата |
+
+### Хранилища
+
+| Компонент | Роля |
+| --- | --- |
+| Памет на възлите | Данните + 50-100 B overhead на ключ; Hash за групиране на малки стойности |
+| RDB / AOF (по избор) | Ускорява рестарт; за чист кеш често е изключен |
+| Основна база | Източникът на истината, оразмерен за miss трафика (и за avalanche) |
+
+### Комуникация, backpressure и патерни
+
+- **Синхронно:** cache-aside: `GET` → при miss чети базата → `SET` с TTL и jitter. Една мрежова обиколка, под 1 ms.
+- **Асинхронно:** репликация (губи последните ms при failover), инвалидация след commit, warmup.
+- **Backpressure:** `min-replicas-to-write` спира запис при split brain; single-flight лок при stampede, за да стигне една заявка до базата вместо N; rate limit към базата и stale отговори при avalanche; L1 кеш и копия на ключа срещу hot key; `UNLINK` вместо `DEL` за big key.
+- **Патерни:** server-side шардиране (hash slots) срещу client-side consistent hashing (Memcached), cache-aside / write-through / write-behind / refresh-ahead, "пиши в базата, после DEL" + delayed double delete + кратък TTL, negative caching + Bloom filter срещу penetration, Lua за атомарни проверки, лок като оптимизация, не гаранция.
+
 ## Описание на архитектурата стъпка по стъпка
 
 ### 1. Кой решава къде живее ключът: клиент или сървър

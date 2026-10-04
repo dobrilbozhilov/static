@@ -40,6 +40,38 @@ SDK-та пращат към gateway). Всичко се събира в Kafka �
 резултата на Alertmanager. Той решава кой, кога и с какво групиране да бъде събуден. Пунктираните
 стрелки са асинхронни: нито един scrape, нито едно правило не чака запис на диск.
 
+## Системен дизайн накратко
+
+Три части с различни изисквания: събиране (pull и push, милион samples/сек), съхранение (TSDB с Gorilla компресия и tiered retention) и алармиране (ruler → Alertmanager → човек). 7 сървиса; границата, която всичко пази, е кардиналността на етикетите.
+
+### Сървиси
+
+| # | Сървис | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **Collector / Prometheus** (2 реплики) | Scrape на `/metrics` на 15 s по списък от service discovery, relabel, локална TSDB, `up == 0` безплатно | HTTP pull към сървисите и агентите; remote write на партиди |
+| 2 | **Push gateway / OTel Collector** | Приема push от кратки job-ове и SDK-та, батчове, relabel, лимити | Push от приложенията; към Kafka `metrics-raw` |
+| 3 | **Ingesters** (шардирани по hash на series) | WAL, последните 2 часа в паметта, флъш на immutable 2 h блокове; лимити на series на тенант (429) | Kafka consumer; репликация 3; блокове към object storage |
+| 4 | **Compactor** | Слива блокове, downsampling до 1 min и 1 h тиери (5 агрегата), retention | Фонов над object storage |
+| 5 | **Query engine** | PromQL: селекция по обърнат индекс → chunks → функция; fan-out към ingesters (скорошно) и store (старо); кеш на резултати | HTTP от дашбордите и Ruler-а |
+| 6 | **Ruler** | Оценява alert правилата на 30 s, `for` продължителност, PENDING → FIRING | PromQL към Query engine; POST alerts към Alertmanager |
+| 7 | **Alertmanager** (клъстер) | Grouping, dedup, inhibition, silences, routing по етикети, ескалация | Gossip между инстанциите; webhook към PagerDuty или Slack |
+
+### Хранилища
+
+| Компонент | Роля |
+| --- | --- |
+| Kafka | Буфер и replay между колектори и ingester-и |
+| TSDB блокове (локален SSD) | Raw 15 s, 7-15 дни; Gorilla: около 1.4 B/sample вместо 16 |
+| Object storage | 1 min тиер за 30-90 дни, 1 h за 1-2 години |
+| Series index (в паметта) | Обърнат индекс етикет → posting list; размерът му е кардиналността |
+
+### Комуникация, backpressure и патерни
+
+- **Pull и push:** pull за дълготрайни сървиси (контрол на честотата, `up`), push през gateway за batch job-ове и затворени мрежи.
+- **Асинхронно:** нито един scrape и нито едно правило не чака запис на диск; Kafka поглъща пикове и позволява replay.
+- **Backpressure:** лимити на series и samples на тенант, пресечен лимит връща 429 към колектора; лимит на series в една заявка и timeout; alert правилата с приоритет пред ad-hoc дашбордите; Alertmanager групира и потиска, за да не залее хората.
+- **Патерни:** time series модел с histogram вместо summary (адитивни bucket-и), LSM-подобни immutable блокове с retention като триене, delta-of-delta + XOR компресия, downsampling с min/max/avg/count/sum, SLO burn rate с два прозореца вместо прагове, dead man's switch, exemplars към traces, мониторингът в отделен клъстер от продукцията.
+
 ## Описание на архитектурата стъпка по стъпка
 
 ### 1. Моделът на данните: time series

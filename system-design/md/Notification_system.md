@@ -37,6 +37,40 @@ Kafka по приоритетен топик, Fan-out Step разширява е
 са webhook-ите от доставчиците, които обновяват реалния статус, и DLQ веригата, през която
 провалилите се съобщения се преглеждат и се пускат наново.
 
+## Системен дизайн накратко
+
+Записът е синхронен и минимален (API + outbox в една транзакция, 202 веднага), всичко друго е асинхронен конвейер през Kafka: relay → fan-out → правила и шаблони → worker по канал → доставчик → webhook обратно. 8 сървиса, два приоритетни топика, DLQ с Replay.
+
+### Сървиси
+
+| # | Сървис | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **Public API** | Валидира събитието, записва `alerts` + `outbox` в една транзакция, връща 202 | REST от продуктите; SQL към Postgres |
+| 2 | **Outbox Relayer** | Прехвърля outbox редовете в Kafka по приоритет и ги маркира обработени | pg-query-stream или CDC (Debezium) → Kafka `notifications-critical` / `notifications-bulk` |
+| 3 | **Fan-out Step** | Разширява едно събитие до списък получатели на партиди по 1000, дедупликира (SETNX), rate limit на потребител | Kafka consumer; sync към Rules и Template; Redis |
+| 4 | **Preference & Rules Service** | Канал, opt-out, тихи часове, throttling по потребител | Викан от Fan-out; Preferences DB с Redis кеш |
+| 5 | **Template Service** | Версионирани шаблони по канал и език | Викан от Fan-out |
+| 6 | **Notification Workers** (по канал) | HTTP към доставчика с rate limit, circuit breaker, retry с backoff; записва в in-app inbox | Kafka consumer; HTTPS към FCM/APNs, SES/SendGrid, Twilio/Vonage; DLQ при провал |
+| 7 | **Delivery Status Consumer** | Приема webhook-и `delivered`, `bounced`, `unsubscribed`, проверява подпис, идемпотентен по `provider_message_id` | HTTPS webhook endpoint; UPDATE в Postgres |
+| 8 | **Admin Service** | Чете DLQ, записва `failed_alerts`, аларма в Slack, Replay на партиди | Kafka consumer на `notifications-dlq`; publish обратно в основния топик |
+
+### Хранилища
+
+| Компонент | Роля |
+| --- | --- |
+| Postgres | `alerts`, `outbox` (партиция по дата), статуси |
+| Kafka | `notifications-critical`, `notifications-bulk`, `notifications-retry`, `notifications-dlq` |
+| Redis | Дедупликация, throttling counters, кеш на предпочитания, scheduler (ZSET за отложени) |
+| Preferences DB | Матрица `(user_id, event_type) → channels` |
+| In-app Inbox DB | Персистиран канал с badge брояч |
+
+### Комуникация, backpressure и патерни
+
+- **Синхронно:** само API → Postgres и webhook endpoint-ът (бърз 200, обработка после).
+- **Асинхронно:** цялата доставка през Kafka; webhook-ите от доставчиците са обратният асинхронен канал.
+- **Backpressure:** две точки. Relayer-ът чете със streams, за да не препълни RAM. Fan-out консуматорът регулира с batch size и `pause()/resume()`. Отделно: отделни топици и worker pool-ове по приоритет, за да не бави кампания OTP кода; retry топик вместо блокиране на партицията; circuit breaker към доставчика.
+- **Патерни:** Transactional Outbox / CDC, priority queues, идемпотентен консуматор (exactly-once не съществува), retry с exponential backoff и jitter, DLQ + Replay, failover между доставчици, dry-run и kill switch.
+
 ## Стъпки в потока
 
 1. Public API валидира събитието (`event_type`, `entity_id`, получатели или правило за получатели)

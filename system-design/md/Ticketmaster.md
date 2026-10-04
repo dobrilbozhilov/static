@@ -32,6 +32,41 @@ flowchart TD
 Redis, WebSocket delta съобщения и кратко кеширан JSON на CDN-а, така че 200k RPS refresh-и никога
 не докосват таблицата `seats`. Пунктираните линии са асинхронни.
 
+## Системен дизайн накратко
+
+Проблемът не е обем, а конкуренция: милион души за 50 000 реда. Затова писането е тесен, строго контролиран път (Waiting Room → Booking → Postgres), а четенето на seat map-а е широк и напълно отделен (Redis snapshot + WebSocket + CDN). Общо 9 сървиса плюс Waiting Room на edge-а.
+
+### Сървиси
+
+| # | Сървис | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **Waiting Room (Edge)** | Нарежда потребителите на опашка и пуска около 2 000 RPS с подписан токен | HTTP на edge-а; 429 за останалите |
+| 2 | **API Gateway** | Auth, rate limit, проверка на токена от чакалнята, `Idempotency-Key` | REST от клиента |
+| 3 | **Booking Service** | Hold на място (Redis `SET NX` за 10 min) + условен `UPDATE seats WHERE AVAILABLE` в Postgres + outbox ред в същата транзакция | Sync към Redis и Postgres; връща 201 PENDING |
+| 4 | **Outbox Relay** | Чете таблицата `outbox` и публикува `BookingCreated` | pg-query-stream или CDC (Debezium) → Kafka |
+| 5 | **Saga Orchestrator** | State machine на резервацията: charge → issue ticket → notify, компенсации при провал | Kafka consumer; sync извиквания към Payment, Ticket, Notification; Temporal или собствен |
+| 6 | **Payment Service** | Charge и refund през Stripe с idempotency key | REST към Stripe; webhook-и обратно |
+| 7 | **Ticket Service** | Генерира билета: PDF, QR, баркод | Викан от Saga-та |
+| 8 | **Notification Service** | Email, SMS, push при потвърждение | Викан от Saga-та; async доставка |
+| 9 | **Seat Map Service** | Поддържа snapshot на залата в Redis и праща delta по WebSocket | Слуша промени в `seats`; WebSocket към клиента; JSON през CDN с TTL 1-2 s |
+| 10 | **Reaper Job** | Връща изтеклите HELD места в AVAILABLE на 30 s | Периодичен процес с разпределен лок към Postgres |
+
+### Хранилища
+
+| Компонент | Роля |
+| --- | --- |
+| Postgres | `seats`, `bookings`, `outbox`; `UNIQUE (event_id, seat_id)` е истинската гаранция |
+| Redis | Hold lock с TTL, idempotency ключове, seat map snapshot |
+| Kafka | Booking events между Booking и Saga |
+| CDN | Кеширан seat map JSON |
+
+### Комуникация, backpressure и патерни
+
+- **Синхронно:** REST до `201 PENDING`. Saga стъпките са sync RPC към Payment/Ticket/Notification, но самата Saga е асинхронна спрямо клиента.
+- **Асинхронно:** outbox → Kafka → Saga; seat map delta по WebSocket; резултатът от Saga-та се връща по WebSocket.
+- **Backpressure:** две точки. Waiting Room ограничава входа до дебита на базата (token bucket). Outbox Relay чете като stream, за да не препълни паметта, а Kafka буферира Saga-та.
+- **Патерни:** distributed lock като оптимизация + условен UPDATE като гаранция (fencing tokens при нужда), Transactional Outbox, Saga с оркестрация и компенсации, идемпотентност по ключ от клиента, reconciliation с PSP, CQRS разделение на четене и запис. Алтернатива: single writer per event (Kafka партиция по `event_id`).
+
 ## Описание на архитектурните патерни и микросървиси
 
 ### 1. Управление на конкурентността (Distributed Locking с Redis Redlock)

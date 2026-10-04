@@ -38,6 +38,41 @@ Sequencer-ът пише всяко събитие в лог, който hot stan
 срив той е на същото състояние. Вдясно и долу е студеният път: сделките отиват в Kafka за клиринг,
 надзор и история, и никой от тези консуматори не може да забави matching-а.
 
+## Системен дизайн накратко
+
+Горещ път в микросекунди (Gateway → Risk → Sequencer → Matching Engine → Execution Report) изцяло в паметта, и студен път в милисекунди през Kafka (клиринг, надзор, история). 9 компонента; всичко е детерминистично и възстановимо от входния лог.
+
+### Компоненти
+
+| # | Компонент | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **Client Gateway** | Протоколи (FIX, бинарен, REST, WebSocket), сесии, auth, rate limit на участник, нормализира в фиксиран бинарен формат | Входна точка; праща към Risk; връща execution reports |
+| 2 | **Risk Manager** | Pre-trade проверки под 10 µs: обезпечение, лимити, fat finger, спрян символ | Sync в паметта; храни се от execution reports обратно |
+| 3 | **Sequencer** | Дава монотонен `seq_no` на всяко събитие и го записва в Input Log; единствената точка на сериализация | Append + fsync; UDP multicast към Matching и Standby; primary/standby с lease + fencing |
+| 4 | **Matching Engine** | Една нишка на символ, order book в паметта (масив по тикове, FIFO на ниво, hash по order_id), price-time priority | Консумира по `seq_no`; изход към Execution Reporting, Market Data, Kafka |
+| 5 | **Hot Standby Engine** | Същият лог, същото състояние, не публикува; поема за микросекунди | Същият multicast поток |
+| 6 | **Execution Reporting** | Fills, acks, rejects обратно към участниците | Към Gateway |
+| 7 | **Market Data Publisher** | L1/L2 потоци, conflation за бавни консуматори, recovery канал по `seq_no` | Multicast UDP към колокирани, WebSocket за retail |
+| 8 | **Clearing and Settlement** | Netting, позиции, задължения T+1 | Kafka consumer; Postgres |
+| 9 | **Surveillance** | Spoofing, layering, манипулации | Kafka consumer |
+
+### Хранилища
+
+| Компонент | Роля |
+| --- | --- |
+| Input Log | Append-only, единствената истина; книгата е функция от лога |
+| Book snapshots | На всеки N секунди за бърз cold start |
+| Kafka | `trades`, `orders` към студения път |
+| Postgres | Сделки, позиции, одит (пише се от консуматор, не от engine-а) |
+| ClickHouse | Tick данни, backtesting, регулаторни заявки |
+
+### Комуникация, backpressure и патерни
+
+- **Синхронно (горещ път):** бинарни съобщения, kernel bypass, lock-free ring buffer, без алокации, без GC; p99 под 100 µs.
+- **Асинхронно (студен път):** Kafka за всичко, което търпи милисекунди; никой консуматор не може да забави matching-а.
+- **Backpressure:** rate limit на участник на входа; conflation на market data за бавни клиенти (сделките не се конфлатират); отказана поръчка не получава `seq_no`.
+- **Патерни:** single sequencer (превръща разпределен проблем в еднонишков), single-threaded engine per symbol (паралелизъм между книги, не вътре), event sourcing + replay + snapshot, hot standby, lease с fencing за failover, партициониране по `symbol` навсякъде, opening auction за пика при отваряне.
+
 ## Описание на архитектурата стъпка по стъпка
 
 ### 1. Client Gateway: протоколи и нормализация

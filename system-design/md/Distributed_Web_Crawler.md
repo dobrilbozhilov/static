@@ -37,6 +37,38 @@ Parser-ът разделя резултата на два потока: съдъ
 връщат във Frontier-а. Re-crawl Scheduler-ът е вторият вход в цикъла: той връща вече обходени
 страници за пресвежаване според колко често се променят.
 
+### Системен дизайн накратко
+
+Един голям цикъл: Frontier решава кой URL е следващ, Fetcher го тегли, Parser го разделя на съдържание (към дедупликация и индекс) и линкове (обратно във Frontier-а). 7 компонента, свързани през Kafka, всеки шардиран по хост, за да е учтивостта вярна и в клъстер.
+
+**Компоненти**
+
+| # | Компонент | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **URL Frontier** | Приоритет (front queues) и учтивост (back queues по хост, heap по `next_allowed_at`) | Публикува в Kafka `urls-to-fetch`, партиция по хост; състояние в Redis/RocksDB |
+| 2 | **Re-crawl Scheduler** | Връща вече обходени URL-и за пресвежаване с адаптивна честота | Enqueue във Frontier |
+| 3 | **Fetcher Workers** | HTTP GET с timeout-и и лимит на размера, 1 заявка / 2 s на хост, кеширани robots.txt и DNS | Kafka pull при свободен слот; HTTP към външни сайтове; публикува raw HTML в `parsed-pages` |
+| 4 | **Parser Workers** | Извлича текст, линкове, метаданни | Kafka consumer; подава към Dedup и Normalizer |
+| 5 | **Content Dedup** | SimHash fingerprint, Hamming distance под 3 бита | Lookup в SimHash Index; записва новото съдържание в Storage |
+| 6 | **URL Normalizer** | Канонична форма на URL-а, после проверка "виждан ли е" | Bloom filter в Redis → при "може би" финална проверка в URL DB → нов URL към Frontier |
+| 7 | **Indexer** | Строи inverted index от съхраненото съдържание | Batch от Content Storage към Elasticsearch |
+
+**Хранилища**
+
+| Компонент | Роля |
+| --- | --- |
+| Kafka | `urls-to-fetch` и `parsed-pages`, партиция по хост, at-least-once |
+| Redis | Robots cache (TTL часове), Bloom filter за видени URL-и (около 12 GB за 10 млрд.) |
+| URL DB (Cassandra) | Статус и `last_crawl_at` на всеки URL |
+| SimHash Index (Redis / RocksDB) | Fingerprint-и в пермутации за бърз lookup |
+| Content Storage (S3 / Bigtable) | Суровото и извлеченото съдържание |
+
+**Комуникация, backpressure и патерни**
+
+- **Асинхронно почти всичко:** Kafka между всеки два етапа; никой етап не вика следващия директно.
+- **Backpressure:** Fetcher тегли от Kafka само при свободен слот (pull); politeness delay е вграден rate limit към всеки хост; consumer lag на parser-ите е сигналът за скалиране; лимити на дълбочина, URL-и на домейн и размер пазят от crawler traps.
+- **Патерни:** Mercator frontier (две нива опашки), consistent hashing по хост (един хост = един worker), Bloom filter като преден филтър + база за финална проверка, at-least-once с дедупликация, checkpointing на frontier-а в Kafka/Redis, SimHash за near-duplicate.
+
 ### Ключови архитектурни патерни и детайли
 
 #### URL Frontier отвътре (Mercator моделът)
@@ -243,6 +275,19 @@ sequenceDiagram
     R-->>G: allowed=false, retry_after=17
     G-->>C: 429 + Retry-After 17
 ```
+
+### Системен дизайн накратко
+
+Rate Limiter-ът е middleware в процеса на API Gateway-а, не отделен hop. Два компонента и едно хранилище: middleware-ът решава, Redis пази броячите, Limit Config Service казва какви са лимитите.
+
+| # | Компонент | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **Rate Limiter Middleware** | Извлича ключ (IP, API key, user, tenant, ендпойнт), груб отсев в локален брояч, точна проверка в Redis, връща 429 с `Retry-After` | В процеса на gateway-а; `EVALSHA` Lua скрипт към Redis (атомарно check + INCR) |
+| 2 | **Limit Config Service** | Лимити по plan, tenant и ендпойнт, без деплой на gateway-а | Чете се при старт; pub/sub при промяна |
+| 3 | **Redis Cluster** | Sliding window counters с TTL, hash tag за един слот | Единствената мрежова обиколка, timeout 5-10 ms |
+
+- **Патерни:** sliding window counter (два брояча, претеглени), Lua за атомарност, двустепенна проверка (локално + Redis), многослойни лимити от евтин към скъп, fail open с авариен локален лимит (fail closed за login, OTP и плащания).
+- **Backpressure към клиента:** заглавията `X-RateLimit-*` се връщат и при успех, за да се забави добронамереният клиент сам, преди да удари лимита.
 
 ### Ключови алгоритми и имплементация за интервю
 

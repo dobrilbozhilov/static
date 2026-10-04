@@ -64,6 +64,36 @@ flowchart TD
 | Valkey | Бърза споделена памет: снимки на игрите, билети за собственост, сесии, броячи за rate limit. |
 | Postgres | Основната база. Тук остава всичко, което трябва да се пази завинаги. |
 
+## Системен дизайн накратко
+
+6 сървиса, един bus и две хранилища. Stateless отпред (Gateway BFF и Realtime edge), stateful в средата (Game node-ове, всяка игра с точно един owner), фонови worker-и отзад. NATS е единственият начин сървисите да си говорят: request/reply вместо gRPC, publish за живите фреймове, JetStream вместо отделна job библиотека.
+
+### Сървиси
+
+| # | Сървис | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **Gateway BFF** | Auth, join, залог с `Idempotency-Key`, snapshot четения, rate limits; сам не решава нищо | REST от браузъра; NATS request `game.cmd.<gameId>` с timeout 300 ms; Valkey за сесии, snapshots, броячи; Postgres за профил и турнири |
+| 2 | **Realtime edge** (2-4 процеса) | Държи WebSocket връзките, канали, fan-out на цени, резултати и класация; coalescing за бавни клиенти | WebSocket от браузъра; NATS subscribe `frames.*`, `price.*` |
+| 3 | **Game node-ове** | Owner на игри: loop, ledger в паметта, залози, сетълмент, ботове в процеса, дялове и координатор на турнир | NATS subscribe на subject на играта; queue group `lobby.assign` за нови игри; publish `frames.*`; JetStream `events.game.*`; pipelined snapshot във Valkey; lease + epoch във Valkey |
+| 4 | **Price ingest** (active-passive) | Чете борсовия feed и го публикува веднъж | WebSocket от борсата; NATS publish `price.<asset>` |
+| 5 | **Worker-и** | Persistence, ranking, поща, analytics; надзорник за изтекли lease-ове | JetStream durable consumers, идемпотентни по `event_id`; Drizzle към Postgres |
+| 6 | **Admin API + Backoffice** | Команди към игрите, справки | NATS команди; SQL |
+
+### Хранилища
+
+| Компонент | Роля |
+| --- | --- |
+| NATS (core + JetStream) | Request/reply, pub/sub на живо, durable събития с ack, retry и DLQ |
+| Valkey | Snapshots за takeover и презареждане, leases с epoch, сесии, rate limits |
+| Postgres | System of record: профили, турнири, резултати, история на ledger-а |
+
+### Комуникация, backpressure и патерни
+
+- **Синхронно:** REST клиент → Gateway; NATS request/reply Gateway → owner (300 ms, рутиране по subject, no responders при липса на owner). По пътя на играча нарочно няма опашка.
+- **Асинхронно:** `frames.*` и `price.*` при at-most-once (resync при reconnect, не replay); JetStream `events.game.*` при at-least-once към worker-ите; snapshot, без да чака.
+- **Backpressure:** бърз отказ към играча (503 след 1 s); пълен node сваля ръка от queue group-а; coalescible срещу mandatory фреймове и затваряне с "resync" при лимит; JetStream consumer lag като сигнал за autoscale; измерван crash window на snapshot-а.
+- **Патерни:** single owner per game с ledger в паметта (без distributed locks по парите), lease + fencing epoch срещу split brain, subject-based routing вместо service registry, queue group за placement без диспечер, resync вместо replay, compute once at the owner, sharded round (coordinator + N shards, merge на подредени списъци), идемпотентност по клиентски ключ и `event_id`.
+
 ## Пример от край до край: какво става, когато играч натисне HIGH
 
 ```mermaid

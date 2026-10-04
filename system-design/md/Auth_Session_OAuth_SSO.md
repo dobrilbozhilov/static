@@ -55,6 +55,38 @@ refresh токените в Redis и подписва с ключ от KMS. Пъ
 всяка заявка, плюс refresh token, който **е** server-side състояние в Redis и може да се отнеме.
 Така отнемането действа до 15 минути навсякъде и моментално там, където се проверява denylist-ът.
 
+## Системен дизайн накратко
+
+Два пътя през един load balancer: `/auth/*` към Auth Service (пароли, MFA, издаване на токени, server-side състояние в Redis) и `/api/*` през API Gateway, който валидира JWT локално с JWKS без мрежова обиколка. 5 сървиса; хибридът кратък JWT + отнемаем refresh token е ядрото.
+
+### Сървиси
+
+| # | Сървис | Какво прави | Как комуникира |
+| --- | --- | --- | --- |
+| 1 | **Auth Service** | Login с argon2id, rate limit и lockout, MFA (TOTP, WebAuthn), издава access JWT (5-15 min) и refresh token с rotation и reuse detection, OIDC callback към IdP, публикува JWKS | HTTPS; Postgres; Redis за сесии, refresh семейства, denylist, login attempts; KMS за подпис; OIDC redirect към IdP; Kafka `auth-events` |
+| 2 | **API Gateway** | Валидира подпис, `exp`, `iss`, `aud` по `kid` от кеширан JWKS; по изключение проверява `revoked_at` в Redis | HTTPS; `GET /.well-known/jwks.json` на минути; препраща с user claims |
+| 3 | **Application Services** | Бизнес логика с готови claims | Викат Authorization Service за `check(user, action, resource)` |
+| 4 | **Authorization Service** | RBAC или ReBAC (Zanzibar тип) с relation tuples и наследяване; кеширана проверка с кратък TTL | RPC от сървисите; Permissions DB |
+| 5 | **Audit / Risk Worker + Notification** | Нов device, гео аномалия, "вход от ново устройство" | Kafka consumer `auth-events` |
+
+### Хранилища
+
+| Компонент | Роля |
+| --- | --- |
+| Users DB (Postgres) | `password_hash`, MFA секрети (криптирани), `oauth_clients` |
+| Redis | `session:*`, `refresh:*` (хеширани, family_id, used), set `user_sessions`, `revoked:*`, `login_attempts:*` |
+| KMS / HSM | Signing keys с ротация, pepper, client secrets |
+| Permissions DB (Postgres или Spanner) | Relation tuples |
+| Kafka | `auth-events` (около 20k/сек) за одит |
+| Identity Provider (външен) | SSO през OIDC или SAML |
+
+### Комуникация, backpressure и патерни
+
+- **Синхронно:** login и refresh към Auth Service (Redis запис); всяка API заявка валидира JWT локално, нула обиколки за 99% от заявките.
+- **Асинхронно:** auth събития към одит и известия.
+- **Backpressure:** паролното хеширане (50 ms CPU) е в отделен pool (bulkhead), за да не блокира валидациите; rate limit по IP, акаунт и двойка; временен lockout с експоненциално нарастване; CAPTCHA само при съмнение.
+- **Патерни:** хибрид JWT + server-side refresh, refresh rotation с reuse detection, JWKS с `kid` за ротация без downtime, HttpOnly cookie за refresh + access в паметта, Authorization Code + PKCE, OIDC върху OAuth 2.0, ReBAC с zookie, mTLS между сървиси, denylist като признание, че stateless е относително.
+
 ## Описание на архитектурата стъпка по стъпка
 
 ### 1. Пароли
