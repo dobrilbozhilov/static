@@ -42,11 +42,11 @@ sorted set от Redis, добавя постовете на малкото celeb
 
 | # | Сървис | Какво прави | Как комуникира |
 | --- | --- | --- | --- |
-| 1 | **API Gateway** | Auth, rate limit | REST от клиента |
-| 2 | **Post Service** | Валидира и записва поста, публикува събитие | INSERT в Post DB; Kafka `post-created`; връща 201 веднага |
-| 3 | **Fan-out Service** | За автори под около 100k последователи: `ZADD post_id` в inbox-а на всеки активен последовател; backfill при нов follow | Kafka consumer group; Social Graph и Redis Feed Cache |
-| 4 | **Feed Service** | Взима inbox-а от Redis, добавя pull на celebrity постовете, слива, ранкира, хидратира с 2 MGET, филтър за видимост | REST; Redis, Post DB, Ranking Service с timeout 50 ms |
-| 5 | **Ranking Service** | ML оценка на стотици кандидати с офлайн изчислени признаци | Викан от Feed Service; чете Feature Store |
+| 1 | **API Gateway** | Auth, rate limit | HTTPS REST от клиента; gRPC към Post и Feed Service (синхронно) |
+| 2 | **Post Service** | Валидира и записва поста, публикува събитие | gRPC от Gateway; CQL INSERT в Post DB; Kafka producer `post-created` (асинхронно); връща 201 веднага след записа |
+| 3 | **Fan-out Service** | За автори под около 100k последователи записва `post_id` в inbox-а на всеки активен последовател; backfill при нов follow | Kafka consumer group (pull); Redis `SMEMBERS followers:<author>` (или заявка към graph DB); Redis pipeline `ZADD feed:<user>` + `ZREMRANGEBYRANK` |
+| 4 | **Feed Service** | Взима inbox-а от Redis, добавя pull на celebrity постовете, слива, ранкира, хидратира, филтрира за видимост | gRPC от Gateway; Redis `ZREVRANGEBYSCORE`, `SINTER`, `MGET`; CQL `SELECT` от `posts_by_author` за celebrity pull; gRPC към Ranking с deadline 50 ms |
+| 5 | **Ranking Service** | ML оценка на стотици кандидати с офлайн изчислени признаци | gRPC от Feed Service (синхронно, с timeout); чете Feature Store (Redis или Cassandra) |
 
 ### Хранилища
 
@@ -57,15 +57,23 @@ sorted set от Redis, добавя постовете на малкото celeb
 | Post Cache (Redis) | Тела на постовете за hydration |
 | Social Graph (Redis или graph DB) | followers, following, set `celebrities` |
 | Counters (Redis) | Лайкове и коментари, write-behind към Post DB |
-| Kafka | `post-created`, `follow-changed` |
+| Kafka | `post-created`, `follow-changed`, лайкове |
 | Object Storage + CDN | Медия, качена директно |
 
 ### Комуникация, backpressure и патерни
 
-- **Синхронно:** REST за публикуване (до записа в Post DB) и за четене на feed-а. Ranking е sync, но с timeout budget и fallback към хронологичен ред.
+- **Синхронно:** HTTPS REST за публикуване (до записа в Post DB) и за четене на feed-а; gRPC между сървисите. Ranking е sync, но с timeout budget и fallback към хронологичен ред.
 - **Асинхронно:** fan-out през Kafka; потребителят не чака 200 записа в Redis. Броячите се флъшват write-behind.
 - **Backpressure:** Kafka поглъща пиковете на fan-out-а и позволява worker-ите да наваксват; celebrity постовете изобщо не се fan-out-ват; неактивните потребители се пропускат; локална агрегация на лайкове (INCRBY на 100 ms) срещу hot key.
 - **Патерни:** хибриден push/pull според power-law разпределението, ID-та в кеша + hydration (не копия), cursor пагинация по score, дедупликация чрез `ZADD` member, производен кеш с rebuild от Post DB при загуба, graceful degradation на ranking-а.
+
+### Flow: сценариите стъпка по стъпка
+
+**Публикуване на пост.** Мария с 300 последователи пише пост със снимка. Снимката отива директно в Object Storage с presigned URL, а текстът и `media_id` тръгват като `POST /posts` към API Gateway, който по gRPC вика Post Service. Post Service записва поста в Cassandra (ключ `post_id`, Snowflake ID, което носи и времето) и публикува събитие `post-created` в Kafka. Връща 201. Мария вижда поста си веднага, а всичко останало става без нея. Fan-out Service тегли събитието от Kafka, проверява броя последователи на Мария (300, под прага от 100 000, значи push модел), взима списъка им от Social Graph и за всеки, който е бил активен през последните 30 дни, прави `ZADD feed:<follower> <time> <post_id>` плюс `ZREMRANGEBYRANK`, който пази само последните 500 ID-та. Това са 300 малки записа в Redis, pipeline-нати. Inbox-ът пази само 8-байтови ID-та, не поста, защото иначе редакция или изтриване биха означавали 300 обновявания. Ако Redis клъстерът е временно недостъпен, събитията се трупат в Kafka и се обработват после.
+
+**Отваряне на feed-а.** Иван отваря приложението; `GET /feed?cursor=` стига до Feed Service. Той прави `ZREVRANGEBYSCORE feed:Иван` и взима 100 кандидат ID-та от готовия inbox (повече от 20-те, които ще покаже, защото някои ще отпаднат при филтъра). После пита Social Graph кои от следваните от Иван са celebrity (`SINTER following:Иван celebrities`), получава например 3 акаунта и тегли последните им 20 поста от `posts_by_author` в Cassandra (тези заявки са кеширани, защото един и същ celebrity пост го питат милиони). Слива двата списъка по време, дедупликира и праща около 150 кандидата към Ranking Service по gRPC с deadline 50 ms; ако моделът не отговори навреме, feed-ът се връща хронологичен (feed без ranking е приемлив, feed без отговор не е). За топ 20 прави един `MGET post:<id>` от Post Cache за телата (при miss чете Cassandra и пълни кеша), минава филтър за видимост (изтрит пост, блокиран автор, вече не е следван) и един `MGET` за броячите на лайкове. Връща 20 поста и `next_cursor` (score на последния), така че следващата страница е "преди този", не `OFFSET 20`, който би показвал повторения при нови постове.
+
+**Celebrity пост и неактивен потребител.** Футболист с 50 милиона последователи публикува. Post Service го записва и толкова: Fan-out Service вижда, че е над прага, и не прави нищо, защото 50 милиона записа за един клик биха задръстили Redis, а повечето от тези хора няма да отворят приложението днес. Постът се появява в чуждите feed-ове чак при четене, през pull стъпката по-горе, с 200 ms разлика, която никой не забелязва. Самият пост става hot key в Post Cache, затова Feed Service държи локален кеш в процеса с TTL от секунди. Обратният случай: Петър не е отварял приложението 3 месеца. Fan-out го пропуска всеки ден (не е в active set-а), inbox-ът му изтича по TTL. Когато се върне, Feed Service вижда празен inbox и го изгражда на място с pull от Post DB за всички, които Петър следва: скъпа заявка от секунди, но платена веднъж при завръщане, вместо всеки ден за нищо. Същото се случва, ако целият Redis feed кеш се загуби: той е производен, не източник на истина.
 
 ## Описание на архитектурата стъпка по стъпка
 

@@ -50,13 +50,13 @@ idempotency key, Payment Service минава през твърдите прав
 
 | # | Сървис | Какво прави | Как комуникира |
 | --- | --- | --- | --- |
-| 1 | **API Gateway** | Auth, rate limit, TLS | REST с `Idempotency-Key` |
-| 2 | **Payment Service** | Payment intent, state machine с условни UPDATE, идемпотентност (SETNX + UNIQUE), authorize/capture към PSP със същия ключ | Sync към Redis, Risk, PSP; SQL транзакция с outbox |
-| 3 | **Risk Service** | Твърди синхронни правила под 50 ms (блок листи, velocity, гео); асинхронен ML скоринг след това | Викан sync от Payment; async консуматор за скоринга |
-| 4 | **Ledger Service** | Двойно счетоводство: append-only записи, сумата на трансфера е нула, баланс = отчет | REST `POST /transfers` от Payment; Postgres с CHECK или тригер |
-| 5 | **Webhook Handler** | Проверява подписа на PSP, дедупликира по `event_id` (`ON CONFLICT DO NOTHING`), бърз 200, условен UPDATE по състояние | HTTPS от PSP (at-least-once, без ред) |
-| 6 | **Worker-и** | Поща, аналитика, payouts на партиди към търговци | Kafka consumer groups; payouts към PSP с ключ `merchant_id + period` |
-| 7 | **Reconciliation Job** | Нощно сравнение на ledger-а със сетълмент файла на PSP; разминаванията отиват към Ops | Batch; чете Ledger DB; пише в Ops Dashboard |
+| 1 | **API Gateway** | Auth, rate limit, TLS | HTTPS REST с `Idempotency-Key`; gRPC към Payment Service (синхронно) |
+| 2 | **Payment Service** | Payment intent, state machine с условни UPDATE, идемпотентност (SETNX + UNIQUE), authorize/capture към PSP със същия ключ | gRPC от Gateway; Redis `SET NX` (синхронно); gRPC към Risk Service с deadline 50 ms (синхронно); HTTPS REST към PSP с `Idempotency-Key` (синхронно, с circuit breaker); SQL транзакция `payments` + `outbox`; gRPC `Transfer` към Ledger Service |
+| 3 | **Risk Service** | Твърди синхронни правила под 50 ms (блок листи, velocity, гео); асинхронен ML скоринг след това | gRPC от Payment за правилата (синхронно); Kafka consumer `payment-events` за ML скоринга (асинхронно), който може да задържи capture |
+| 4 | **Ledger Service** | Двойно счетоводство: append-only записи, сумата на трансфера е нула, баланс = отчет | gRPC `Transfer` от Payment, Webhook Handler и worker-ите; SQL транзакция в Ledger DB с `CHECK` или тригер за нулева сума |
+| 5 | **Webhook Handler** | Проверява подписа на PSP, дедупликира по `event_id`, бърз 200, условен UPDATE по състояние | HTTPS POST от PSP (асинхронно, at-least-once, без ред); SQL `INSERT ... ON CONFLICT DO NOTHING` + условен UPDATE; gRPC към Ledger |
+| 6 | **Worker-и** | Поща, аналитика, payouts на партиди към търговци | Kafka consumer groups на `payment-events` (pull); HTTPS към PSP payouts API с ключ `merchant_id + period`; gRPC към Ledger |
+| 7 | **Reconciliation Job** | Нощно сравнение на ledger-а със сетълмент файла на PSP; разминаванията отиват към Ops | Cron batch; сваля сетълмент CSV от PSP по SFTP или HTTPS; SQL към Ledger DB; записва в Ops Dashboard |
 
 ### Хранилища
 
@@ -70,10 +70,18 @@ idempotency key, Payment Service минава през твърдите прав
 
 ### Комуникация, backpressure и патерни
 
-- **Синхронно:** клиент → Payment → Risk → PSP. Крайният статус обаче не идва от sync отговора, а от webhook.
+- **Синхронно:** HTTPS REST клиент → Gateway; gRPC Gateway → Payment → Risk → Ledger; HTTPS REST Payment → PSP. Крайният статус обаче не идва от sync отговора, а от webhook.
 - **Асинхронно:** webhook-и от PSP, outbox → Kafka → worker-и, нощен reconciliation, ML скоринг.
 - **Backpressure:** circuit breaker около PSP клиента; retry с backoff само за преходни грешки; webhook endpoint-ът записва и връща 200 веднага, обработва после; payouts на партиди.
 - **Патерни:** идемпотентност на три хопа (клиент → нас → PSP → webhook), двойно счетоводство (append-only ledger), state machine с условни UPDATE, Transactional Outbox, reconciliation, optimistic locking или single writer per account за портфейли, bulkhead за риск, цели числа в минимални единици.
+
+### Flow: сценариите стъпка по стъпка
+
+**Плащане от край до край.** Клиентът натиска "Плати 100 EUR". Браузърът първо вика нашия API: `POST /payments` със сума, валута и `Idempotency-Key` (UUID, генериран от клиента). Gateway-ът проверява auth и го препраща по gRPC към Payment Service. Payment Service прави `SET idem:<key> NX EX 86400` в Redis: ключът е нов, продължава. Записва ред в `payments` със състояние `CREATED` и връща на браузъра `client_secret`. Браузърът предава картата директно на Stripe през техния iframe (картовите данни никога не минават през нас, затова PCI одитът е техен, не наш) и получава токен. Payment Service вика Risk Service по gRPC за твърдите правила (блок листи, пет карти от един акаунт за минута, държава на картата срещу IP), с deadline 50 ms. При "ок" вика Stripe по HTTPS за authorize + capture със същия `Idempotency-Key`, така че ако нашата заявка се повтори, Stripe връща стария отговор, без втори charge. Stripe отговаря "pending". Връщаме 202 с `payment_id`. Крайният статус не идва от този отговор: секунди по-късно Stripe праща webhook `payment.captured`. Webhook Handler проверява HMAC подписа, записва събитието с `INSERT INTO payment_events ... ON CONFLICT DO NOTHING`, отговаря 200 веднага и прави `UPDATE payments SET state = 'CAPTURED' WHERE id = $1 AND state IN ('CREATED', 'AUTHORIZED')`. Един ред засегнат: прехода е наш. Вика Ledger Service: един трансфер от три записа, `customer:u42 -10000`, `merchant:m7 +9710`, `fees +290`, сумата е нула, записите са append-only и никога не се променят. В същата транзакция в `payments` се записва и outbox ред, който relay-ът праща в Kafka; оттам worker-ите пращат имейл с касова бележка и записват аналитика.
+
+**Загубен отговор и дублиран webhook.** Мрежата прекъсва точно след като сме върнали 202 и браузърът не го получава. Потребителят натиска "Плати" пак. Същият `Idempotency-Key` пристига; `SET NX` в Redis казва "ключът съществува" и Payment Service връща същия `payment_id` и същия отговор, без нов ред и без втори charge. Ако Redis беше загубил ключа при failover, `UNIQUE` constraint-ът върху `idempotency_key` в Postgres е втората защита. Ако ключът е същият, но сумата е различна, отговорът е 422: това е грешка на клиента, не второ плащане. По-късно Stripe праща същия webhook `e9` втори път (те препращат по дизайн, at-least-once). `INSERT ... ON CONFLICT DO NOTHING` не вмъква нищо, обработката приключва и ledger-ът не получава втори трансфер. Ако webhook-ите пристигнат в разбъркан ред (`captured` преди `authorized`), условните UPDATE-и го решават: `captured` върху `CREATED` се приема (PSP знае повече от нас), а закъснялото `authorized` върху `CAPTURED` засяга 0 реда и не променя нищо.
+
+**Нощен reconciliation.** В 3 през нощта Reconciliation Job сваля сетълмент файла на Stripe за вчерашния ден: CSV с всяко движение и всяка такса. Сравнява го ред по ред с `ledger_entries`. Три вида разминавания: плащане при Stripe, за което нямаме запис (загубен webhook, който и retry-ите му не са доставили; създаваме записа и алармираме), плащане при нас без пари при Stripe (маркирали сме го платено, а не е: инцидент, не грешка), и разлика в сумата или таксата (записваме коригиращ обратен запис, никога `UPDATE`). Отделно poller гледа през деня плащания в `CREATED` над 15 минути и пита Stripe `GET /payments/:id` за истината. Резултатът от нощта е отчет с нулево разминаване или списък за ръчна намеса в Ops Dashboard. Системата е проектирана с допускането, че разминавания ще има; въпросът е колко бързо се хващат. Същият job пресмята и payouts: балансът на всеки търговец минус rolling reserve за chargeback-ове се изплаща на партиди с идемпотентен ключ `merchant_id + period`, за да не се изплати два пъти при рестарт.
 
 ## Описание на архитектурата стъпка по стъпка
 

@@ -46,15 +46,15 @@ Sequencer-ът пише всяко събитие в лог, който hot stan
 
 | # | Компонент | Какво прави | Как комуникира |
 | --- | --- | --- | --- |
-| 1 | **Client Gateway** | Протоколи (FIX, бинарен, REST, WebSocket), сесии, auth, rate limit на участник, нормализира в фиксиран бинарен формат | Входна точка; праща към Risk; връща execution reports |
-| 2 | **Risk Manager** | Pre-trade проверки под 10 µs: обезпечение, лимити, fat finger, спрян символ | Sync в паметта; храни се от execution reports обратно |
-| 3 | **Sequencer** | Дава монотонен `seq_no` на всяко събитие и го записва в Input Log; единствената точка на сериализация | Append + fsync; UDP multicast към Matching и Standby; primary/standby с lease + fencing |
-| 4 | **Matching Engine** | Една нишка на символ, order book в паметта (масив по тикове, FIFO на ниво, hash по order_id), price-time priority | Консумира по `seq_no`; изход към Execution Reporting, Market Data, Kafka |
-| 5 | **Hot Standby Engine** | Същият лог, същото състояние, не публикува; поема за микросекунди | Същият multicast поток |
-| 6 | **Execution Reporting** | Fills, acks, rejects обратно към участниците | Към Gateway |
-| 7 | **Market Data Publisher** | L1/L2 потоци, conflation за бавни консуматори, recovery канал по `seq_no` | Multicast UDP към колокирани, WebSocket за retail |
-| 8 | **Clearing and Settlement** | Netting, позиции, задължения T+1 | Kafka consumer; Postgres |
-| 9 | **Surveillance** | Spoofing, layering, манипулации | Kafka consumer |
+| 1 | **Client Gateway** | Протоколи, сесии, auth, rate limit на участник, нормализира в фиксиран бинарен формат | Приема FIX по TCP и собствен бинарен протокол по TCP от институционалните участници, HTTPS REST и WebSocket от retail; към Risk подава бинарни съобщения през lock-free ring buffer в паметта или по TCP с kernel bypass (синхронно) |
+| 2 | **Risk Manager** | Pre-trade проверки под 10 µs: обезпечение, лимити, fat finger, спрян символ | Бинарни съобщения в паметта от Gateway (синхронно); отказаните връща веднага; приетите подава към Sequencer; обновява позициите си от execution reports (обратен поток) |
+| 3 | **Sequencer** | Дава монотонен `seq_no` на всяко събитие и го записва в Input Log; единствената точка на сериализация | Append + `fsync` в Input Log на NVMe; UDP multicast на събитията към Matching Engine и Hot Standby (едно изпращане, всички получават); primary/standby с lease + fencing epoch |
+| 4 | **Matching Engine** | Една нишка на символ, order book в паметта (масив по тикове, FIFO на ниво, hash по `order_id`), price-time priority | Консумира multicast потока строго по `seq_no`; изход към Execution Reporting и Market Data през ring buffers в паметта; сделките към Kafka producer (асинхронно, не чака ack) |
+| 5 | **Hot Standby Engine** | Същият лог, същото състояние, не публикува; поема за микросекунди | Същият multicast поток от Sequencer; при failover започва да публикува от следващия `seq_no` |
+| 6 | **Execution Reporting** | Fills, acks, rejects обратно към участниците | Бинарни съобщения към Gateway, който ги превежда във FIX ExecutionReport или WebSocket съобщение |
+| 7 | **Market Data Publisher** | L1/L2 потоци, conflation за бавни консуматори, recovery канал по `seq_no` | UDP multicast към колокираните участници + TCP recovery канал за загубени пакети; WebSocket (конфлатиран) за retail |
+| 8 | **Clearing and Settlement** | Netting, позиции, задължения T+1 | Kafka consumer `trades` (pull); SQL към Postgres |
+| 9 | **Surveillance** | Spoofing, layering, манипулации | Kafka consumer `orders` и `trades` (pull); пише в ClickHouse |
 
 ### Хранилища
 
@@ -68,10 +68,18 @@ Sequencer-ът пише всяко събитие в лог, който hot stan
 
 ### Комуникация, backpressure и патерни
 
-- **Синхронно (горещ път):** бинарни съобщения, kernel bypass, lock-free ring buffer, без алокации, без GC; p99 под 100 µs.
+- **Синхронно (горещ път):** бинарни съобщения, kernel bypass, lock-free ring buffer, UDP multicast, без алокации, без GC; p99 под 100 µs.
 - **Асинхронно (студен път):** Kafka за всичко, което търпи милисекунди; никой консуматор не може да забави matching-а.
 - **Backpressure:** rate limit на участник на входа; conflation на market data за бавни клиенти (сделките не се конфлатират); отказана поръчка не получава `seq_no`.
 - **Патерни:** single sequencer (превръща разпределен проблем в еднонишков), single-threaded engine per symbol (паралелизъм между книги, не вътре), event sourcing + replay + snapshot, hot standby, lease с fencing за failover, партициониране по `symbol` навсякъде, opening auction за пика при отваряне.
+
+### Flow: сценариите стъпка по стъпка
+
+**Поръчка до изпълнение.** Брокер праща по FIX `NewOrderSingle: buy AAPL 500 @ 190.12 limit`. Client Gateway я парсва веднъж и я превръща във вътрешно бинарно съобщение с фиксиран размер, за да няма повече parsing по пътя, и проверява, че участникът не е надхвърлил 1 000 съобщения в секунда. Risk Manager гледа в паметта си: има ли брокерът обезпечение за 500 × 190.12, не е ли поръчката 50 пъти над нормалния размер (fat finger), не е ли AAPL спрян. Отнема около 2 µs. Отказаната поръчка се връща веднага и никога не получава номер; официално не е пристигнала. Приетата отива в Sequencer-а, който ѝ дава `seq_no 4420`, дописва я в Input Log и я праща по UDP multicast. Matching Engine-ът за AAPL (една нишка, закачена за едно ядро, която обработва събитията строго по номер) я сравнява с книгата: най-ниската продажна цена е 190.12 с 300 акции на това ниво, по-ранната поръчка е първа (price-time priority по `seq_no`, не по timestamp, защото часовниците на машините се разминават с микросекунди). Изпълнява 300, остатъкът от 200 влиза в книгата като работна поръчка. Праща ExecutionReport "partial fill 300, seq 4420" към Gateway, който го превежда във FIX към брокера, и book update към Market Data. Общо под 100 µs. Чак сега, без да чака, сделката отива в Kafka: Clearing я чете за нетиране и T+1 сетълмент, Surveillance проверява дали не е част от spoofing схема, ClickHouse я пази завинаги.
+
+**Падане на Matching Engine.** Машината с AAPL книгата спира по средата на сесията. Hot Standby Engine-ът е получавал същия multicast поток от Sequencer-а и е обработвал всяко събитие по същия начин, така че в паметта му стои идентична книга на `seq_no 4420`; просто досега не е публикувал. Lease-ът на primary изтича, standby-ят поема и започва да публикува от 4421. Участниците може да получат последните няколко execution reports втори път, но всеки носи `seq_no` и те ги дедупликират. Нищо не е загубено: всичко, което е получило номер, е в Input Log, а всичко без номер официално не е пристигнало. Ако паднат и двата engine-а, нов инстанс зарежда последния snapshot на книгата (правен на всеки N секунди) и replay-ва събитията от лога след него; понеже engine-ът е детерминистичен, стига до байт същата книга. Същият детерминизъм се тества всяка нощ: записан лог от продукцията се пуска през две версии на engine-а и изходите се сравняват байт по байт.
+
+**Бавен market data клиент.** В 15:30 излиза отчет и книгата на NVDA се променя 20 000 пъти в секунда. Колокираните HFT участници получават всяка промяна по UDP multicast (едно изпращане от нашата страна, без TCP потвърждения; загубен пакет се възстановява през отделен TCP канал по `seq_no`). Retail приложението на WebSocket обаче не може да приеме 20 000 съобщения в секунда и не му трябват. Market Data Publisher следи колко изостава всеки WebSocket клиент и за изоставащите слива междинните състояния: вместо 200 book updates праща последното състояние на топ 10 нива (conflation, защото за цената важи само последната стойност). Сделките обаче не се конфлатират, всяка има значение и всяка стига. Така един бавен клиент не трупа буфер в паметта на сървъра и не бави никого. Rate limit-ът на входа е огледалният механизъм: един алгоритъм с 50 000 cancel-а в секунда не може да задуши входа за останалите.
 
 ## Описание на архитектурата стъпка по стъпка
 

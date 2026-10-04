@@ -49,14 +49,14 @@ flowchart TD
 
 | # | Сървис | Какво прави | Как комуникира |
 | --- | --- | --- | --- |
-| 1 | **Analyzer Pipeline** | Tokenize, normalize, stop words, stemming по език, forward index запис | Kafka consumer `documents`; рутира към шард по `hash(doc_id)` |
-| 2 | **Index Shards** (около 100 по 50 GB) + реплики (x2) | Буфер в паметта → refresh на 1 s → нов сегмент; merge; BM25 top 100 локално; deleted bitset | Translog като WAL; репликация на операцията; заявки от координатора |
-| 3 | **Link / Signal Jobs** | PageRank-подобен авторитет, кликове, свежест | Нощен batch → Document Signals store |
-| 4 | **API Gateway** | Auth, rate limit | REST `GET /search` |
-| 5 | **Query Processor** | Parse, spelling, синоними, пренаписване, results cache | Redis cache-aside; към Coordinator при miss |
-| 6 | **Query Coordinator** | Scatter към всички шардове, gather, heap merge на 10 000 кандидата до около 500 | Паралелни RPC към една реплика на шард; hedged requests |
-| 7 | **Re-ranker** | Learning to rank върху около 500 кандидата със стотици признаци | Чете Signals store; връща top 10 |
-| 8 | **Result Fetcher** | Snippets и полета за финалните 10 | `MGET` от Document Store |
+| 1 | **Analyzer Pipeline** | Tokenize, normalize, stop words, stemming по език, forward index запис | Kafka consumer `documents` (pull); gRPC `Index` към primary шарда по `hash(doc_id)` (синхронно); запис в Document Store |
+| 2 | **Index Shards** (около 100 по 50 GB) + реплики (x2) | Буфер в паметта → refresh на 1 s → нов сегмент; merge; BM25 top 100 локално; deleted bitset | gRPC сървър за `Index` и `Search`; primary праща операцията към репликите по gRPC и ack-ва след тях; translog на локален диск като WAL |
+| 3 | **Link / Signal Jobs** | PageRank-подобен авторитет, кликове, свежест | Нощен Spark batch; пише в Document Signals store (Cassandra или Redis) |
+| 4 | **API Gateway** | Auth, rate limit | HTTPS REST `GET /search`; gRPC към Query Processor (синхронно) |
+| 5 | **Query Processor** | Parse, spelling, синоними, пренаписване, results cache | gRPC от Gateway; Redis `GET`/`SET` cache-aside (синхронно); gRPC към Coordinator при miss |
+| 6 | **Query Coordinator** | Scatter към всички шардове, gather, heap merge на 10 000 кандидата до около 500 | Паралелни gRPC `Search` към една реплика на всеки шард с deadline (синхронно); hedged request към втора реплика при закъснение |
+| 7 | **Re-ranker** | Learning to rank върху около 500 кандидата със стотици признаци | gRPC от Coordinator (синхронно, с бюджет); чете Signals store с `MGET` |
+| 8 | **Result Fetcher** | Snippets и полета за финалните 10 | gRPC от Coordinator; `MGET` по `doc_id` от Document Store |
 
 ### Хранилища
 
@@ -70,10 +70,18 @@ flowchart TD
 
 ### Комуникация, backpressure и патерни
 
-- **Синхронно:** целият път на заявката в бюджет от 200 ms; 10k QPS отвън стават 1M shard заявки вътре.
+- **Синхронно:** HTTPS REST отвън, gRPC вътре; целият път на заявката в бюджет от 200 ms; 10k QPS отвън стават 1M shard заявки вътре.
 - **Асинхронно:** индексиране през Kafka, refresh и merge, нощни signal jobs.
 - **Backpressure:** results cache и filter cache пред координатора (60-80% hit); таймаут с частичен резултат от 98 шарда; по-малко и по-големи шардове; `search_after` cursor вместо offset; отделен малък "свеж" индекс за новини вместо чест refresh на основния.
 - **Патерни:** inverted index с posting lists и skip lists, immutable сегменти + merge (LSM модел), шардиране по документ (не по термин), scatter-gather с hedged requests срещу tail latency, двуфазно подреждане (BM25 retrieval → LTR re-ranking), индексът като производна структура (истината е в Postgres или S3), обновяване = delete + reindex.
+
+### Flow: сценариите стъпка по стъпка
+
+**Нов документ става търсим.** Crawler-ът (или продуктов каталог) публикува документ 1088 в Kafka `documents`. Analyzer Pipeline го тегли и го превръща в термини: разделя на думи, прави lowercase и маха диакритиката (`é` → `e`), изхвърля stop words ("и", "the"), засича езика и прилага stemming ("търсачки", "търсачката" → един корен). Същата нормализация ще се приложи и върху заявките, иначе "Система" и "система" биха били два термина. Записва пълния документ в Document Store (forward index, `doc_id → полета`) и праща термините по gRPC към шард 42, избран по `hash(1088) % 100`. Шардът ги дописва в translog-а си (WAL: ако възелът падне преди refresh, документът се възстановява оттам) и в буфер в паметта, праща същата операция към двете си реплики и ack-ва след тях. Документът още не е търсим. На всяка секунда (refresh) буферът става нов малък неизменяем сегмент на диска: речник (FST) с указатели към posting lists, тоест за всеки термин подреден списък от `doc_id` с честота и позиции, компресиран с delta encoding. Оттук нататък `search 'kabuto'` го намира. Стотици малки сегменти забавят търсенето, затова фонов merge ги слива в по-големи (compaction, същият модел като LSM дърво). Ако документът се обнови, не се пипа на място, защото е разпръснат по хиляди posting lists: старият `doc_id` се маркира в deleted bitset, новата версия се индексира като нов документ, а физически старият изчезва при merge. Затова чести промени на малки полета (брой лайкове) не минават през индекса.
+
+**Заявка "systm design".** Потребителят натиска Enter. `GET /search?q=systm+design` стига през Gateway до Query Processor, който първо нормализира заявката и проверява Results Cache в Redis по хеш на нормализираната форма: топ заявките са Zipf разпределени и 60-80% спират тук. При miss пренаписва: правописът поправя "systm" на "system" (BK-tree или n-грами), синонимите добавят "systems design", филтрите (`site:`, дата) стават bitset условия. Query Coordinator-ът разпръсква (scatter) заявката по gRPC към една реплика на всеки от 100-те шарда, избрана по натоварване, с deadline. Всеки шард работи само върху своите posting lists: започва от най-редкия термин ("design" е по-рядък от "system"), пресича списъците с skip lists (по редкия върви последователно, в дългия скача през 128 записа), смята BM25 за всяко съвпадение (колко пъти е терминът в документа, колко рядък е в целия корпус, колко дълъг е документът) и връща локалния си top 100 с оценки. Координаторът слива (gather) 10 000 кандидата с heap до около 500 и ги праща на Re-ranker-а. Той чете за всеки признаците от Signals store (авторитет от линковата структура, свежест, кликове от предишни потребители, съответствие на заглавието), прилага learning-to-rank модел (GBDT) и връща подредени top 10. Моделът е скъп на кандидат, затова никога не вижда милионите съвпадения, а само стотиците. Result Fetcher прави `MGET` за 10-те документа от Document Store, изрязва snippets около търсените думи и връща отговора за под 200 ms. Query Processor го записва в Redis с TTL до следващия refresh. Пагинацията е `search_after` (score + `doc_id` на последния), не offset: страница 1 000 с offset би искала всеки шард да върне 10 000 кандидата.
+
+**Бавен шард.** При p99 от 50 ms на шард вероятността поне един от 100 да е бавен е над 60%: заявката е бавна колкото най-бавния шард (tail latency). Координаторът не чака пасивно. Ако реплика на шард 17 не е отговорила до p95 латентността (например 40 ms), праща същата заявка към втора реплика на шард 17 (hedged request) и взима първия отговор; струва около 5% допълнителен трафик, а сваля p99 в пъти. Ако и двете закъснеят до deadline-а от 150 ms, координаторът връща частичен резултат от 99 шарда и го маркира като такъв в отговора, вместо да върне грешка. Дългосрочно се следи кои реплики са бавни и трафикът се пренасочва (адаптивен избор на реплика), а броят шардове се държи възможно най-малък, защото всеки шард умножава заявките. Същият проблем и същото решение като при четене с кворум в Key-Value Store.
 
 ## Описание на архитектурата стъпка по стъпка
 

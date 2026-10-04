@@ -45,13 +45,13 @@ Parser-ът разделя резултата на два потока: съдъ
 
 | # | Компонент | Какво прави | Как комуникира |
 | --- | --- | --- | --- |
-| 1 | **URL Frontier** | Приоритет (front queues) и учтивост (back queues по хост, heap по `next_allowed_at`) | Публикува в Kafka `urls-to-fetch`, партиция по хост; състояние в Redis/RocksDB |
-| 2 | **Re-crawl Scheduler** | Връща вече обходени URL-и за пресвежаване с адаптивна честота | Enqueue във Frontier |
-| 3 | **Fetcher Workers** | HTTP GET с timeout-и и лимит на размера, 1 заявка / 2 s на хост, кеширани robots.txt и DNS | Kafka pull при свободен слот; HTTP към външни сайтове; публикува raw HTML в `parsed-pages` |
-| 4 | **Parser Workers** | Извлича текст, линкове, метаданни | Kafka consumer; подава към Dedup и Normalizer |
-| 5 | **Content Dedup** | SimHash fingerprint, Hamming distance под 3 бита | Lookup в SimHash Index; записва новото съдържание в Storage |
-| 6 | **URL Normalizer** | Канонична форма на URL-а, после проверка "виждан ли е" | Bloom filter в Redis → при "може би" финална проверка в URL DB → нов URL към Frontier |
-| 7 | **Indexer** | Строи inverted index от съхраненото съдържание | Batch от Content Storage към Elasticsearch |
+| 1 | **URL Frontier** | Приоритет (front queues) и учтивост (back queues по хост, heap по `next_allowed_at`) | Kafka producer `urls-to-fetch`, партиция по хост (асинхронно); състоянието си (хост → опашка, `next_allowed_at`) пази в Redis/RocksDB |
+| 2 | **Re-crawl Scheduler** | Връща вече обходени URL-и за пресвежаване с адаптивна честота | Периодичен job; чете URL DB по CQL; праща URL-и към Frontier (gRPC `Enqueue`) |
+| 3 | **Fetcher Workers** | HTTP GET с timeout-и и лимит на размера, 1 заявка / 2 s на хост, кеширани robots.txt и DNS | Kafka consumer `urls-to-fetch` (pull само при свободен слот); HTTP GET към външните сайтове; Redis `GET robots:<host>`; собствен кеширащ DNS resolver; Kafka producer `parsed-pages` със суровия HTML |
+| 4 | **Parser Workers** | Извлича текст, линкове, метаданни | Kafka consumer `parsed-pages` (pull); вика Content Dedup и URL Normalizer като библиотеки в същия процес |
+| 5 | **Content Dedup** | SimHash fingerprint, Hamming distance под 3 бита | Lookup в SimHash Index (Redis или RocksDB); при ново съдържание HTTPS PUT в S3 / Bigtable |
+| 6 | **URL Normalizer** | Канонична форма на URL-а, после проверка "виждан ли е" | Redis `BF.EXISTS` (Bloom filter); при "може би" CQL `SELECT` в URL DB; новите URL-и към Frontier по gRPC |
+| 7 | **Indexer** | Строи inverted index от съхраненото съдържание | Batch job чете S3; HTTP bulk API към Elasticsearch |
 
 **Хранилища**
 
@@ -68,6 +68,14 @@ Parser-ът разделя резултата на два потока: съдъ
 - **Асинхронно почти всичко:** Kafka между всеки два етапа; никой етап не вика следващия директно.
 - **Backpressure:** Fetcher тегли от Kafka само при свободен слот (pull); politeness delay е вграден rate limit към всеки хост; consumer lag на parser-ите е сигналът за скалиране; лимити на дълбочина, URL-и на домейн и размер пазят от crawler traps.
 - **Патерни:** Mercator frontier (две нива опашки), consistent hashing по хост (един хост = един worker), Bloom filter като преден филтър + база за финална проверка, at-least-once с дедупликация, checkpointing на frontier-а в Kafka/Redis, SimHash за near-duplicate.
+
+**Flow: сценариите стъпка по стъпка**
+
+**Обхождане на една страница.** Frontier-ът има URL `example.com/blog/post-7` в back опашката на хоста `example.com`. В heap-а по време този хост е най-отгоре, защото последната заявка към него е била преди 2.1 секунди, а правилото е 1 заявка на 2 секунди. Frontier-ът публикува URL-а в Kafka `urls-to-fetch`, в партицията на `example.com` (хеш на хоста), и записва новото `next_allowed_at`. Fetcher-ът, който е единственият консуматор на тази партиция (затова никога два worker-а не удрят един хост), го тегли, когато има свободен слот (pull: ако е зает с 200 отворени връзки, не тегли нищо и съобщението чака). Проверява `robots.txt` в Redis (кеширан за часове, с `Crawl-delay`, ако сайтът иска по-бавно), резолва хоста през собствения си DNS кеш и прави HTTP GET с timeout за connect и за четене и с лимит от N MB. Ако сървърът върне 304 на `If-Modified-Since`, страницата не е променена и нищо не продължава. Иначе суровият HTML отива в Kafka `parsed-pages`. Parser-ът го тегли, извлича текста и линковете, и ги разделя на два потока.
+
+**Съдържанието и новите линкове.** За текста Parser-ът смята SimHash (64-битов отпечатък, при който близки текстове дават близки битове) и пита SimHash Index дали има отпечатък на разстояние под 3 бита. Ако има, страницата е почти копие на вече известна (огледало, print версия) и се пази само като указател към каноничната. Ако е ново съдържание, отива в Content Storage, откъдето Indexer-ът го взима на партиди и го индексира в Elasticsearch. За линковете Normalizer-ът ги привежда в канонична форма (lowercase на хоста, маха `utm_*` и `#fragment`, сортира параметрите), иначе `example.com/a` и `EXAMPLE.com/a/?utm=x` щяха да са два URL-а. После пита Bloom filter-а в Redis. "Със сигурност не е виждан" означава нов URL: добавя се във филтъра и отива във Frontier-а, където prioritizer-ът го слага в подходящата front опашка според важност и дълбочина. "Може би е виждан" (филтърът има малък процент false positives) се проверява окончателно в URL DB. Така базата поема само около 1% от проверките.
+
+**Падане на Fetcher worker.** Worker-ът, който държи партициите на 500 хоста, умира по средата. Kafka забелязва липсата на heartbeat и преразпределя партициите му към останалите консуматори (rebalance). URL-ите, които е бил изтеглил, но за които не е commit-нал offset, се доставят отново на новия собственик (at-least-once). Някои страници ще бъдат изтеглени втори път, което е безобидно: Bloom filter-ът и `last_crawl_at` в URL DB поглъщат дубликатите, а SimHash хваща същото съдържание. Frontier-ът не губи нищо, защото опашките му са в Kafka, а таблицата хост → опашка и `next_allowed_at` са в Redis/RocksDB (checkpoint), така че рестарт означава четене на последния checkpoint, а не започване от seed списъка.
 
 ### Ключови архитектурни патерни и детайли
 
@@ -282,12 +290,20 @@ Rate Limiter-ът е middleware в процеса на API Gateway-а, не от
 
 | # | Компонент | Какво прави | Как комуникира |
 | --- | --- | --- | --- |
-| 1 | **Rate Limiter Middleware** | Извлича ключ (IP, API key, user, tenant, ендпойнт), груб отсев в локален брояч, точна проверка в Redis, връща 429 с `Retry-After` | В процеса на gateway-а; `EVALSHA` Lua скрипт към Redis (атомарно check + INCR) |
-| 2 | **Limit Config Service** | Лимити по plan, tenant и ендпойнт, без деплой на gateway-а | Чете се при старт; pub/sub при промяна |
-| 3 | **Redis Cluster** | Sliding window counters с TTL, hash tag за един слот | Единствената мрежова обиколка, timeout 5-10 ms |
+| 1 | **Rate Limiter Middleware** | Извлича ключ (IP, API key, user, tenant, ендпойнт), груб отсев в локален брояч, точна проверка в Redis, връща 429 с `Retry-After` | Работи в процеса на gateway-а (Kong, Nginx, Envoy), без мрежов hop; `EVALSHA` на Lua скрипт към Redis по RESP (атомарно check + INCR, една обиколка); при разрешение препраща заявката по HTTP към микросървисите |
+| 2 | **Limit Config Service** | Лимити по plan, tenant и ендпойнт, без деплой на gateway-а | HTTPS GET от gateway-а при старт; Redis Pub/Sub известие при промяна на лимит |
+| 3 | **Redis Cluster** | Sliding window counters с TTL, hash tag за един слот | RESP по TCP; timeout 5-10 ms, за да не стане "Redis е бавен" равно на "API-то е бавно" |
 
 - **Патерни:** sliding window counter (два брояча, претеглени), Lua за атомарност, двустепенна проверка (локално + Redis), многослойни лимити от евтин към скъп, fail open с авариен локален лимит (fail closed за login, OTP и плащания).
 - **Backpressure към клиента:** заглавията `X-RateLimit-*` се връщат и при успех, за да се забави добронамереният клиент сам, преди да удари лимита.
+
+**Flow: сценариите стъпка по стъпка**
+
+**Нормална заявка.** Клиент с API key `K` праща `GET /api/orders`. Gateway-ът извлича ключовете, по които ще лимитира: IP адреса, API key-а, tenant-а и ендпойнта. Първо гледа локалния брояч в собствената си памет: ако този ключ е направил явно повече от лимита в последната секунда, отказва веднага, без мрежа (груб отсев). Иначе праща `EVALSHA` към Redis с Lua скрипта за sliding window: скриптът чете брояча на текущата минута и на предишната, претегля предишната според колко от нея още попада в плъзгащия прозорец (например 40% при 36-та секунда), събира ги и ако сумата е под лимита, прави `INCR` на текущия брояч и слага `PEXPIRE`. Всичко това е една атомарна команда, затова две паралелни заявки не могат и двете да видят 999 и да минат (race condition). Redis отговаря `allowed=true, remaining=412`; gateway-ът препраща заявката към микросървиса и добавя `X-RateLimit-Remaining: 412` в отговора.
+
+**Превишен лимит.** 1 001-вата заявка в прозореца минава същия път, но скриптът връща `allowed=false, retry_after=17`. Gateway-ът отговаря `429 Too Many Requests` с `Retry-After: 17` и `X-RateLimit-Reset`, без заявката изобщо да стигне до микросървисите (те дори не разбират). Добре написаният клиент чете заглавието и спира за 17 секунди; лошо написаният продължава да получава 429 за цената на една Redis команда.
+
+**Redis е недостъпен.** Заявката към Redis изтича след 10 ms. Gateway-ът трябва да реши без точен отговор: за обикновените ендпойнти пуска заявката (fail open), но включва по-строг авариен локален лимит и вдига аларма, защото точно сега системата е най-уязвима. За `/login`, OTP и плащания отказва (fail closed), защото там лимитът пази пари и сигурност, а не само капацитет. Когато Redis се върне, броячите започват от нула и системата се връща към точния режим.
 
 ### Ключови алгоритми и имплементация за интервю
 

@@ -50,19 +50,19 @@ flowchart TD
 
 | # | Сървис | Какво прави | Как комуникира |
 | --- | --- | --- | --- |
-| 1 | **Dedup + fraud filter** | `click_id` в RocksDB state с TTL 24 h (Bloom отпред); фрод правила и скор, флаг вместо изхвърляне | Kafka consumer `click-events` → producer `clicks-clean` |
-| 2 | **Stream aggregator** (Flink) | Tumbling 1-min прозорци по `(ad_id, minute)` в event time, watermark 5-10 s, allowed lateness 60 s; излъчва пълния брой на прозореца | Kafka consumer по `ad_id`; checkpoint на 30 s в S3; idempotent upsert в Aggregates store; late → `late-clicks` |
-| 3 | **Correction worker** | Инкрементира минутата за много закъснели събития | Kafka consumer `late-clicks`; upsert delta |
-| 4 | **Top-K merger** | Слива per-partition heap-овете в глобален top 100 на минута | Получава K кандидати от всяка партиция; пише един ред на минута |
-| 5 | **Batch recompute** (Spark) | Нощно преизчислява деня от lake-а със същата библиотека, пише billing агрегати, reconciliation срещу горещите | Чете Parquet от S3; пише Billing DB |
-| 6 | **Query API** | Count по реклама и диапазон, top-K, флаг `final` | REST от дашборда; чете Aggregates store |
+| 1 | **Dedup + fraud filter** | `click_id` в RocksDB state с TTL 24 h (Bloom отпред); фрод правила и скор, флаг вместо изхвърляне | Kafka consumer `click-events` (pull, партиция по `ad_id`); локален RocksDB на всеки task; Kafka producer `clicks-clean` |
+| 2 | **Stream aggregator** (Flink) | Tumbling 1-min прозорци по `(ad_id, minute)` в event time, watermark 5-10 s, allowed lateness 60 s; излъчва пълния брой на прозореца | Kafka consumer `clicks-clean` (pull); checkpoint на 30 s по S3 API; idempotent upsert по CQL (Cassandra) или HTTP (ClickHouse) към Aggregates store; Kafka producer `late-clicks` |
+| 3 | **Correction worker** | Инкрементира минутата за много закъснели събития | Kafka consumer `late-clicks` (pull); CQL `UPDATE count = count + n` |
+| 4 | **Top-K merger** | Слива per-partition heap-овете в глобален top 100 на минута | Flink оператор: получава K кандидати от всяка партиция през вътрешния network shuffle на Flink; пише един ред на минута в store-а |
+| 5 | **Batch recompute** (Spark) | Нощно преизчислява деня от lake-а със същата библиотека, пише billing агрегати, reconciliation срещу горещите | Чете Parquet от S3 по S3 API; JDBC към Billing DB (Postgres); CQL към Aggregates store за сравнение |
+| 6 | **Query API** | Count по реклама и диапазон, top-K, флаг `final` | HTTPS REST от дашборда (синхронно); CQL или HTTP към Aggregates store; никога не чете Kafka или сурови събития |
 
 ### Хранилища
 
 | Компонент | Роля |
 | --- | --- |
 | Kafka | `click-events` (партиция по `ad_id`, 7 дни), `clicks-clean`, `late-clicks` |
-| Data lake (S3, Parquet по час) | Сурови събития за години; източник за batch и backfill |
+| Data lake (S3, Parquet по час) | Сурови събития за години; източник за batch и backfill; пълни се от Kafka sink connector |
 | Checkpoint store (S3) | Operator state + offsets атомарно |
 | Aggregates store (Cassandra или ClickHouse) | `(ad_id, minute) → count`, top-K редове |
 | Billing DB (Postgres) | Окончателни числа, reconciliation |
@@ -73,6 +73,14 @@ flowchart TD
 - **Синхронно:** само `GET /ads/:id/clicks` от готовите агрегати.
 - **Backpressure:** Kafka с 7 дни ретенция поглъща пикове и бъгове (replay); consumer lag и watermark lag са метриките за скалиране; salting на горещ `ad_id` в 16 подключа с two-phase aggregation; партиции 2-3 пъти повече от task-овете.
 - **Патерни:** event time + watermark + allowed lateness, exactly-once чрез checkpoint (state + offset) + идемпотентен upsert по ключ на прозореца, дедупликация по `click_id`, lambda архитектура с обща библиотека и reconciliation, per-partition heap + merge за top-K, backfill чрез нов consumer group и `offsetsForTimes`.
+
+### Flow: сценариите стъпка по стъпка
+
+**Клик до дашборда.** Потребител кликва реклама 42 в 10:00:12 на телефона си. Ad server-ът логва събитие `{click_id: uuid, ad_id: 42, ts: 10:00:12.123, region: BG, device: ios}` и го публикува в Kafka `click-events`, в партицията на `ad_id = 42` (всички кликове на една реклама са в една партиция, за да не трябва размесване при броенето). `ts` е моментът на клика (event time), не моментът, в който сме го получили. Kafka sink connector копира същото събитие непроменено в Parquet файлове в S3 по час, за студената пътека. Dedup етапът тегли събитието (pull), проверява `click_id` в своя RocksDB state (с Bloom filter отпред, за да не чете диска за всеки нов ключ): нов е, записва го с TTL 24 часа. Ако същият `click_id` дойде пак (ретрай на клиента, на log shipper-а или на producer-а), се изхвърля, защото всеки ретрай иначе е фалшива фактура. Фрод правилата проверяват дали от този `ip_hash` няма 50 клика в минутата и дали е имало impression преди клика; съмнителното се маркира с флаг, не се изтрива, за да има следа при спор. Събитието отива в `clicks-clean`. Flink агрегаторът го тегли и го добавя в прозореца 10:00-10:01 за реклама 42: броячът става 1, после 2 и така нататък в паметта на задачата. Когато watermark-ът (твърдението "не очаквам повече събития с `ts` под 10:01:05", смятано като най-големия видян ts минус 5 секунди, минимум между партициите) подмине 10:01, прозорецът се затваря и Flink излъчва пълния брой: `PUT (ad 42, 10:00) → 2 341` в Cassandra. Не `+= 2 341`, а пълната стойност, защото повторно излъчване на същия прозорец трябва да презапише същото число, не да го удвои. Query API-то чете този ред за дашборда с `final: false`.
+
+**Закъснял клик и срив на задача.** Клик с `ts = 10:00:40` пристига в 10:01:30, 25 секунди след като прозорецът е затворен, защото телефонът е бил в тунел. Прозорецът 10:00 обаче още е в state-а, защото allowed lateness е 60 секунди: Flink добавя клика, броячът става 2 342 и прозорецът се излъчва повторно с upsert, който презаписва 2 341 с 2 342 в същия ред. Клик с `ts = 10:00:50`, пристигнал в 10:03, е след allowed lateness и прозорецът вече е изхвърлен от паметта. Той отива в `late-clicks`, откъдето Correction worker-ът прави `UPDATE count = count + 1` за минутата 10:00. Делът на такива събития е метрика с аларма: скок означава бавна партиция или твърде агресивен watermark. Междувременно task manager-ът пада в 10:00:45. Flink е правил checkpoint на всеки 30 секунди: атомарна снимка на state-а (частичните броячи) и на Kafka offset-ите заедно в S3. Възстановява се от checkpoint 17 (offset 1000, брояч 1) и преработва от offset 1001; клиците след checkpoint-а се броят отново, но само веднъж, защото state-ът е върнат на същата точка. Това е exactly-once вътре в потока. Към Cassandra гаранцията идва от идемпотентния upsert по `(ad_id, minute)`: sink-ът е външна система, която не участва в checkpoint-а.
+
+**Нощният batch и фактурата.** В 2 през нощта Spark job чете всички Parquet файлове за вчера от S3 и преизчислява броя кликове за всяка реклама и минута, със същата библиотека за нормализация и фрод филтри, която ползва и стриймът (иначе двете логики се разминават с времето). Този job вижда всичко: всички закъснели събития, всички поправки във фрод правилата от деня. Пише резултата в Billing DB като `count_final` и го сравнява с горещите числа от Cassandra; разлика над 0.1% за реклама вдига аларма (reconciliation). Фактурата винаги е от batch-а, дашбордът винаги от стрийма, и Query API-то връща флаг `final: true`, когато batch-ът е минал. Ако фрод правило се окаже бъгнато за 3 дни назад, поправката е нов Flink job с ново consumer group име, който чете `clicks-clean` от offset-а отпреди 3 дни (`offsetsForTimes`) и пише в същия store: идемпотентният upsert презаписва старите стойности, а reconciliation потвърждава. За данни отвъд 7-дневната Kafka ретенция източникът е lake-ът през същия код в batch режим.
 
 ## Описание на архитектурата стъпка по стъпка
 

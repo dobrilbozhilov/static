@@ -40,32 +40,40 @@ Redis, WebSocket delta съобщения и кратко кеширан JSON н
 
 | # | Сървис | Какво прави | Как комуникира |
 | --- | --- | --- | --- |
-| 1 | **Waiting Room (Edge)** | Нарежда потребителите на опашка и пуска около 2 000 RPS с подписан токен | HTTP на edge-а; 429 за останалите |
-| 2 | **API Gateway** | Auth, rate limit, проверка на токена от чакалнята, `Idempotency-Key` | REST от клиента |
-| 3 | **Booking Service** | Hold на място (Redis `SET NX` за 10 min) + условен `UPDATE seats WHERE AVAILABLE` в Postgres + outbox ред в същата транзакция | Sync към Redis и Postgres; връща 201 PENDING |
-| 4 | **Outbox Relay** | Чете таблицата `outbox` и публикува `BookingCreated` | pg-query-stream или CDC (Debezium) → Kafka |
-| 5 | **Saga Orchestrator** | State machine на резервацията: charge → issue ticket → notify, компенсации при провал | Kafka consumer; sync извиквания към Payment, Ticket, Notification; Temporal или собствен |
-| 6 | **Payment Service** | Charge и refund през Stripe с idempotency key | REST към Stripe; webhook-и обратно |
-| 7 | **Ticket Service** | Генерира билета: PDF, QR, баркод | Викан от Saga-та |
-| 8 | **Notification Service** | Email, SMS, push при потвърждение | Викан от Saga-та; async доставка |
-| 9 | **Seat Map Service** | Поддържа snapshot на залата в Redis и праща delta по WebSocket | Слуша промени в `seats`; WebSocket към клиента; JSON през CDN с TTL 1-2 s |
-| 10 | **Reaper Job** | Връща изтеклите HELD места в AVAILABLE на 30 s | Периодичен процес с разпределен лок към Postgres |
+| 1 | **Waiting Room (Edge)** | Нарежда потребителите на опашка и пуска около 2 000 RPS с подписан токен | HTTPS на edge-а; издава подписан токен (JWT или HMAC) с позиция и валидност; 429 за останалите |
+| 2 | **API Gateway** | Auth, rate limit, проверка на токена от чакалнята, `Idempotency-Key` | Приема HTTPS REST от клиента; gRPC към Booking Service (синхронно) |
+| 3 | **Booking Service** | Hold на място + условен `UPDATE seats WHERE AVAILABLE` + outbox ред в същата транзакция | Redis `SET NX EX 600` (синхронно); SQL транзакция в Postgres (синхронно); не пише директно в Kafka, а в таблицата `outbox` |
+| 4 | **Outbox Relay** | Чете таблицата `outbox` и публикува `BookingCreated` | Чете Postgres през `pg-query-stream` или WAL-а през Debezium (CDC); Kafka producer (асинхронно) |
+| 5 | **Saga Orchestrator** | State machine на резервацията: charge → issue ticket → notify, компенсации при провал | Kafka consumer group (pull); gRPC към Payment, Ticket и Notification (синхронно, всяка стъпка с retry); SQL UPDATE за `CONFIRMED`; Temporal или собствен |
+| 6 | **Payment Service** | Charge и refund през Stripe с idempotency key | gRPC от Saga; HTTPS REST към Stripe с `Idempotency-Key`; HTTPS webhook от Stripe обратно (асинхронно, at-least-once) |
+| 7 | **Ticket Service** | Генерира билета: PDF, QR, баркод | gRPC от Saga; записва PDF в object storage |
+| 8 | **Notification Service** | Email, SMS, push при потвърждение | gRPC от Saga; доставката към email/SMS/push доставчици е асинхронна (виж Notification System) |
+| 9 | **Seat Map Service** | Поддържа snapshot на залата в Redis и праща delta по WebSocket | Слуша промени в `seats` (Postgres LISTEN/NOTIFY или Kafka събитие, асинхронно); Redis `SET` на snapshot; WebSocket push към клиентите; HTTP JSON през CDN с TTL 1-2 s |
+| 10 | **Reaper Job** | Връща изтеклите HELD места в AVAILABLE на 30 s | Периодичен процес; разпределен лок в Redis; SQL UPDATE |
 
 ### Хранилища
 
 | Компонент | Роля |
 | --- | --- |
 | Postgres | `seats`, `bookings`, `outbox`; `UNIQUE (event_id, seat_id)` е истинската гаранция |
-| Redis | Hold lock с TTL, idempotency ключове, seat map snapshot |
+| Redis | Hold lock с TTL, idempotency ключове, seat map snapshot, лок на reaper-а |
 | Kafka | Booking events между Booking и Saga |
 | CDN | Кеширан seat map JSON |
 
 ### Комуникация, backpressure и патерни
 
-- **Синхронно:** REST до `201 PENDING`. Saga стъпките са sync RPC към Payment/Ticket/Notification, но самата Saga е асинхронна спрямо клиента.
+- **Синхронно:** HTTPS REST до `201 PENDING`; gRPC между сървисите. Saga стъпките са sync gRPC към Payment/Ticket/Notification, но самата Saga е асинхронна спрямо клиента.
 - **Асинхронно:** outbox → Kafka → Saga; seat map delta по WebSocket; резултатът от Saga-та се връща по WebSocket.
 - **Backpressure:** две точки. Waiting Room ограничава входа до дебита на базата (token bucket). Outbox Relay чете като stream, за да не препълни паметта, а Kafka буферира Saga-та.
 - **Патерни:** distributed lock като оптимизация + условен UPDATE като гаранция (fencing tokens при нужда), Transactional Outbox, Saga с оркестрация и компенсации, идемпотентност по ключ от клиента, reconciliation с PSP, CQRS разделение на четене и запис. Алтернатива: single writer per event (Kafka партиция по `event_id`).
+
+### Flow: сценариите стъпка по стъпка
+
+**От чакалнята до платен билет.** В 10:00 билетите излизат и 500 000 души натискат "Купи" в една секунда. Всички удрят Waiting Room на edge-а, който не ги пуска навътре, а им дава позиция ("Вие сте #5432") и ги задържа. На всеки няколко секунди пуска толкова хора, колкото базата издържа (около 2 000 в секунда), като на всеки дава подписан токен с кратка валидност. Без токен API Gateway отхвърля заявката, така че никой не може да прескочи опашката. Потребителят с токен избира място 42 и натиска "Резервирай"; браузърът праща `POST /bookings` с токена и с `Idempotency-Key`. Gateway-ът проверява подписа и вика Booking Service по gRPC. Booking Service първо опитва `SET NX hold:event:seat EX 600` в Redis: ако ключът вече го има, някой друг държи мястото и отговорът е "вече е заето" за под милисекунда, без да пипаме базата (локът е оптимизация, която спира 99.9% от конкурентния трафик). Ако локът е взет, прави една SQL транзакция: условен `UPDATE seats SET status = 'HELD' WHERE seat_id = 42 AND status = 'AVAILABLE'` плюс `INSERT INTO outbox (BookingCreated)`. Ако UPDATE-ът засегне 0 реда, някой е бил по-бърз дори с лока (например Redis е загубил ключа при failover) и транзакцията се връща. Това е истинската гаранция, не локът. При успех клиентът получава `201 PENDING` с 10 минути за плащане. Междувременно Outbox Relay чете новия ред и го публикува в Kafka. Потребителят въвежда картата и праща `POST /bookings/:id/pay`; Saga Orchestrator-ът (Temporal) вика Payment Service по gRPC, който вика Stripe с idempotency key. При успех Saga-та вика Ticket Service да генерира PDF с QR код, Notification Service да прати имейла и накрая прави `UPDATE bookings SET CONFIRMED, seats SET BOOKED` и `DEL hold` в Redis. Клиентът научава по WebSocket, че билетът е издаден.
+
+**Плащането се проваля или времето изтича.** Потребителят затваря таба с държано място. Нищо не се случва веднага: Redis локът изтича сам след 10 минути, но редът в Postgres остава `HELD`, затова има два механизма. Първият е мързелив: следващият, който поиска място 42, прави същия условен UPDATE, в чието условие изтекло `HELD` се брои за свободно (`OR (status = 'HELD' AND hold_expires_at < NOW())`). Вторият е Reaper Job, който на всеки 30 секунди връща изтеклите места в `AVAILABLE`, за да се появят пак в seat map-а. Ако пък плащането мине, а Ticket Service крашне, Saga-та след N неуспешни опита пуска компенсация: вика Payment Service за refund (с нов idempotency key), освобождава мястото в Postgres и Redis и праща известие. Ако и компенсацията се провали, случаят отива в DLQ и в опашка за ръчна намеса, защото "платил е и няма билет" е инцидент. Нощен reconciliation job сравнява нашите записи със сетълмент файла на Stripe и хваща всичко, което е минало между капките.
+
+**Гледане на залата.** Докато 2 000 души в секунда резервират, милион души гледат схемата на залата и я refresh-ват на 5 секунди, което е 200 000 заявки в секунда. Нито една не стига до таблицата `seats`. Seat Map Service слуша промените в базата (Postgres NOTIFY или Kafka събитие), поддържа актуален snapshot на залата в Redis и го раздава по два начина: като JSON през CDN с TTL 1-2 секунди (за първоначалното зареждане) и като малки delta съобщения по WebSocket ("място 42 стана заето") за вече отворените страници. Клиентът знае, че картината може да изостава с секунда-две и че при клик мястото може вече да е взето; тогава получава "току-що се зае" и избира друго. Четенето е eventually consistent, записът не е.
 
 ## Описание на архитектурните патерни и микросървиси
 

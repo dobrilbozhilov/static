@@ -44,30 +44,38 @@ WebSocket връзка към Chat Service, който проверява иде
 
 | # | Сървис | Какво прави | Как комуникира |
 | --- | --- | --- | --- |
-| 1 | **WebSocket Gateway** (около 450 инстанции) | Държи до 50k постоянни връзки на процес, heartbeat, регистрира сесиите в Redis, следи `bufferedAmount` | WSS от клиента през L4 LB; получава доставки по Redis Pub/Sub или gRPC |
-| 2 | **API Gateway** | REST за история, login, медия upload URL | HTTPS; препраща към Chat Service |
-| 3 | **Chat Service** | Валидира, дедупликира по `client_msg_id` (SETNX), взима `seq_id` (INCR), записва в Kafka | Викан от WS Gateway; Redis; Kafka producer с `acks=all`, partition key `chat_id` |
-| 4 | **Persist Worker** | Пише историята в Cassandra на партиди, идемпотентен upsert | Kafka consumer group `persist` |
-| 5 | **Delivery Worker** | Намира сесиите на получателя (`HGETALL user_sessions`) и препраща към съответните WS сървъри | Kafka consumer group `deliver`; Redis Pub/Sub канал на сървър или gRPC |
-| 6 | **Push Worker** | Известие (не съобщението) за офлайн получатели, с coalescing | Получава от Delivery Worker; HTTPS към FCM/APNs |
-| 7 | **Search Indexer** | Индексира текст в Elasticsearch (само без E2E, Slack модел) | Kafka consumer group `index`; bulk index |
+| 1 | **WebSocket Gateway** (около 450 инстанции) | Държи до 50k постоянни връзки на процес, heartbeat, регистрира сесиите в Redis, следи `bufferedAmount` | WSS от клиента през L4 (TCP) load balancer; Redis `HSET user_sessions` с TTL; gRPC към Chat Service за всяко изпратено съобщение (синхронно); абониран за Redis Pub/Sub канала `ws:<server_id>`, по който получава съобщения за доставка |
+| 2 | **API Gateway** | REST за история, login, медия upload URL | HTTPS REST от клиента; gRPC към Chat Service |
+| 3 | **Chat Service** | Валидира, дедупликира по `client_msg_id`, взима `seq_id`, записва в Kafka | gRPC от WS и API Gateway; Redis `SET NX` и `INCR chat_seq:<chat_id>` (синхронно); Kafka producer с `acks=all`, partition key `chat_id` (чака потвърждение от брокерите преди да отговори) |
+| 4 | **Persist Worker** | Пише историята в Cassandra на партиди, идемпотентен upsert | Kafka consumer group `persist` (pull); CQL batch INSERT в Cassandra |
+| 5 | **Delivery Worker** | Намира сесиите на получателя и препраща към съответните WS сървъри | Kafka consumer group `deliver` (pull); Redis `HGETALL user_sessions:<user>`; Redis `PUBLISH ws:<server_id>` или gRPC към конкретния WS сървър; за офлайн получател публикува в Kafka топик `push` |
+| 6 | **Push Worker** | Известие (не съобщението) за офлайн получатели, с coalescing | Kafka consumer `push`; HTTPS към FCM / APNs |
+| 7 | **Search Indexer** | Индексира текст в Elasticsearch (само без E2E, Slack модел) | Kafka consumer group `index`; HTTP bulk API към Elasticsearch |
 
 ### Хранилища
 
 | Компонент | Роля |
 | --- | --- |
 | Kafka | Durable лог; `SENT` чак след `acks=all`; партиция по `chat_id` пази реда |
-| Redis | Session registry (Hash на устройство), presence и typing с TTL, idempotency ключове, `seq_id` броячи |
+| Redis | Session registry (Hash на устройство), presence и typing с TTL, idempotency ключове, `seq_id` броячи, Pub/Sub към WS сървърите |
 | Cassandra / ScyllaDB | История, partition `(chat_id, bucket)`, clustering `seq_id DESC` |
 | Elasticsearch | Пълнотекстово търсене |
 | Object Storage + CDN | Медия, качена директно с presigned URL |
 
 ### Комуникация, backpressure и патерни
 
-- **Синхронно:** изпращането върви по вече отворения WebSocket (не REST); клиентът чака само `acks=all` от Kafka. REST за история и `since=<seq>` синхронизация.
+- **Синхронно:** изпращането върви по вече отворения WebSocket (не REST), после gRPC до Chat Service; клиентът чака само `acks=all` от Kafka. HTTPS REST за история и `since=<seq>` синхронизация.
 - **Асинхронно:** всичко след Kafka: три независими consumer group-а (persist, deliver, index); бавна база не бави доставката.
 - **Backpressure:** към бавен клиент по `socket.bufferedAmount` (пауза, после затваряне с "resync"); от Kafka чрез `pause()` на партицията, ако опашката към WS сървърите се напълни; Delivery commit-ва offset след изпращане, не след ACK от телефона.
 - **Патерни:** log-first (Kafka преди базата, вместо Outbox), идемпотентност с клиентски ключ, монотонен `seq_id` за ред и gap detection, at-least-once с дедупликация при получателя, хибриден fan-out (write за малки чатове, read за големи канали), heartbeat + reconnect с jitter + graceful drain.
+
+### Flow: сценариите стъпка по стъпка
+
+**Изпращане и доставка на съобщение.** Анна пише "Здравей" на Борис и натиска Enter. Телефонът ѝ вече има отворена WebSocket връзка към WS-Server-12, затова съобщението тръгва по нея, без нов TCP и TLS handshake, с `client_msg_id` (UUID, генериран на телефона преди първия опит). WS-Server-12 го препраща по gRPC към Chat Service. Chat Service прави `SET idem:<chat>:<client_msg_id> NX` в Redis: ако ключът съществува, това е повторен опит и връща същия `seq_id` като преди, без да записва нищо. Ако е нов, прави `INCR chat_seq:<chat_id>` и получава пореден номер, например 1 042 (атомарен, еднонишков брояч, затова никога два съобщения в един чат не получават един и същ номер). Записва съобщението в Kafka с ключ `chat_id` и `acks=all`, тоест чака поне два брокера да го имат на диск. Чак тогава отговаря на WS сървъра, а той на телефона: една чавка, `SENT`. Оттук нататък Анна не чака нищо. Delivery Worker тегли съобщението от Kafka (pull, със собствено темпо), пита Redis `HGETALL user_sessions:Борис` и получава `{телефон: WS-Server-45, лаптоп: WS-Server-7}`. Публикува съобщението в Redis Pub/Sub каналите `ws:WS-Server-45` и `ws:WS-Server-7`; всеки от тези сървъри го записва в сокета на съответното устройство. Паралелно и независимо Persist Worker чете същото съобщение от Kafka (друг consumer group) и го записва в Cassandra. Когато телефонът на Борис го получи, връща ACK със `seq_id`; WS сървърът публикува събитие `DELIVERED` в Kafka и по същия път Анна получава втората чавка.
+
+**Получателят е офлайн.** Ако `HGETALL` върне празен Hash (Борис е в самолетен режим и TTL-ът на сесиите му е изтекъл), Delivery Worker не може да достави и пуска съобщение в топика `push`. Push Worker-ът го чете и праща известие през FCM/APNs, но само "Ново съобщение от Анна", не самия текст (push доставката е best-effort и не е транспортен канал). Ако дойдат 20 съобщения, Push Worker ги събира в едно известие (coalescing). Самото съобщение си стои в Kafka и Cassandra. Delivery Worker commit-ва offset-а веднага след опита за доставка, не след ACK от телефона, иначе един офлайн потребител би блокирал партицията за всички останали в нея.
+
+**Връщане след прекъсване.** Борис каца и телефонът му се свързва към произволен WS сървър, да кажем WS-Server-3 (няма sticky sessions: регистърът в Redis казва къде е всеки, така че всеки сървър става). Сървърът записва `HSET user_sessions:Борис телефон WS-Server-3`. Телефонът помни `last_seen_seq = 1 039` за чата с Анна и праща `GET /chats/:id/messages?since=1039` по REST. Chat Service чете от Cassandra съобщенията 1 040, 1 041, 1 042 и ги връща. Ако по-късно по WebSocket пристигне съобщение със `seq_id` 1 045, а телефонът е видял само до 1 043, той сам разбира, че е изпуснал 1 044 (gap detection по монотонния номер) и дозарежда. Дубликатите от at-least-once доставката се разпознават по `client_msg_id`. При Slack с 200 канала телефонът не пита всеки поотделно, а `GET /sync?since=<cursor>` връща за всеки канал последния `seq_id`. При reconnect клиентът ползва backoff с jitter, за да не се върнат 50 000 клиента в една и съща милисекунда след рестарт на сървър.
 
 ## Описание на архитектурните патерни и детайли
 

@@ -47,14 +47,14 @@ Job връща инвентара на изтеклите hold-ове. Двет�
 
 | # | Сървис | Какво прави | Как комуникира |
 | --- | --- | --- | --- |
-| 1 | **API Gateway** | Auth, rate limit | REST |
-| 2 | **Search Service** | Филтри, гео, фасети, ranking, наличност по дати от кеш | Elasticsearch; Redis `avail:*` с TTL 60 s; sync към Pricing |
-| 3 | **Pricing Service** | Динамично ценообразуване по сезон, заетост, ден; преизчислява на партиди | Викан от Search; Pricing DB |
-| 4 | **Reservation Service** | `UPDATE inventory SET available - 1 WHERE dates AND available >= 1` за всички нощи, HELD с `expires_at`, идемпотентност по `reservation_id` от клиента, state machine | SQL транзакция в Inventory DB; sync към Payment; outbox → Kafka |
-| 5 | **Payment Service** | Authorize при потвърждение, capture по политика | Виж Payment System; PSP |
-| 6 | **Worker-и** | Поща, синхронизация с PMS / channel manager, аналитика | Kafka consumer group; API към хотелските системи |
-| 7 | **Reaper Job** | На всяка минута връща инвентара на изтекли HELD | Един инстанс с lease в Redis; SQL |
-| 8 | **Hotel Admin Portal** | Цени, наличност, `overbooking_cap` | SQL към Inventory DB |
+| 1 | **API Gateway** | Auth, rate limit | HTTPS REST от клиента; gRPC към Search и Reservation Service (синхронно) |
+| 2 | **Search Service** | Филтри, гео, фасети, ranking, наличност по дати от кеш | gRPC от Gateway; HTTP заявка към Elasticsearch; Redis `MGET avail:<hotel>:<type>:<date>` с TTL 60 s; gRPC към Pricing (синхронно); при cache miss SQL `SELECT` към Inventory DB (read replica) |
+| 3 | **Pricing Service** | Динамично ценообразуване по сезон, заетост, ден; преизчислява на партиди | gRPC от Search; SQL към Pricing DB; фонов batch job пише `rates` |
+| 4 | **Reservation Service** | Условен `UPDATE inventory ... WHERE available >= 1` за всички нощи, HELD с `expires_at`, идемпотентност по `reservation_id` от клиента, state machine | gRPC от Gateway; една SQL транзакция в Inventory DB (синхронно); gRPC към Payment Service; outbox ред → Kafka `reservation-events` (асинхронно) |
+| 5 | **Payment Service** | Authorize при потвърждение, capture по политика | gRPC от Reservation; HTTPS REST към PSP с idempotency key (виж Payment System) |
+| 6 | **Worker-и** | Поща, синхронизация с PMS / channel manager, аналитика | Kafka consumer group `reservation-events` (pull); HTTPS към API-тата на хотелските системи и каналите |
+| 7 | **Reaper Job** | На всяка минута връща инвентара на изтекли HELD | Cron; Redis `SET NX` lease, за да работи само един инстанс; SQL UPDATE |
+| 8 | **Hotel Admin Portal** | Цени, наличност, `overbooking_cap` | HTTPS; SQL към Inventory DB |
 
 ### Хранилища
 
@@ -68,10 +68,18 @@ Job връща инвентара на изтеклите hold-ове. Двет�
 
 ### Комуникация, backpressure и патерни
 
-- **Синхронно:** търсене (кеш, Elasticsearch, Pricing) и резервация (една транзакция + плащане).
+- **Синхронно:** HTTPS REST за търсене и резервация; gRPC между сървисите; резервацията е една SQL транзакция плюс плащане.
 - **Асинхронно:** outbox → Kafka → инвалидация на кеша, PMS sync, поща; reaper на минута.
-- **Backpressure:** търсенето никога не докосва Inventory DB (кеш с TTL поглъща 600 RPS); Pricing се смята на партиди, не при всяко търсене; синхронизацията с каналите е eventually consistent, а overbooking cap поглъща разминаванията.
+- **Backpressure:** търсенето никога не докосва primary Inventory DB (кеш с TTL поглъща 600 RPS); Pricing се смята на партиди, не при всяко търсене; синхронизацията с каналите е eventually consistent, а overbooking cap поглъща разминаванията.
 - **Патерни:** CQRS разделение на търсене и резервация, условен UPDATE (или `FOR UPDATE` с `ORDER BY date` срещу deadlock), hold с изтичане + reaper, идемпотентен INSERT `ON CONFLICT`, Transactional Outbox, event sourcing за одит, overbooking като бизнес параметър, single-shard транзакции по `hotel_id`.
+
+### Flow: сценариите стъпка по стъпка
+
+**Търсене.** Гостът пише "Барселона, 3-5 октомври, 2 души, басейн". `GET /search` стига през Gateway до Search Service. Той пита Elasticsearch "хотели в Барселона с басейн", което връща 200 кандидата с гео точка и удобства, но без цени и наличност (Elasticsearch не знае кое е свободно утре). За всеки кандидат проверява наличността в Redis: ключове `avail:<hotel>:DOUBLE:2026-10-03`, `...-04`, `...-05` с TTL 60 секунди, един `MGET`. Ключовете, които липсват, се зареждат от read replica на Inventory DB и се записват в кеша. Цената идва от Pricing Service по gRPC, който я чете от предварително изчислената таблица `rates` (сезон, заетост, ден от седмицата се смятат на партиди, не при всяко търсене). Search ранкира и връща първата страница. Кешът може да изостава със секунди: ако някой е взел последната стая преди 20 секунди, гостът ще я види и ще получи "току-що се изчерпа" при клик. Това е съзнателен компромис: алтернативата, всяко търсене да пита базата за резервации за 365 дни × 20 типа стаи × 200 хотела, би убила и търсенето, и резервациите.
+
+**Двама за последната стая.** Анна и Борис едновременно избират последната двойна стая в хотел H-17 за 3-5 октомври. Всеки от тях е получил `reservation_id` (UUID), генериран от браузъра при отваряне на страницата за плащане. Двете заявки `POST /reservations` стигат до Reservation Service, който за всяка пуска една SQL транзакция: `UPDATE inventory SET available = available - 1 WHERE hotel_id = 'H-17' AND room_type_id = 'DOUBLE' AND date BETWEEN '2026-10-03' AND '2026-10-05' AND available >= 1`. Няма предварителен `SELECT`, защото проверката в кода между SELECT и UPDATE е точно race condition-ът; базата проверява и намалява атомарно ред по ред. За Анна Postgres връща "3 реда засегнати", колкото са нощите: тя взима стаята. Следва `INSERT INTO reservations (reservation_id, state = 'HELD', expires_at = now + 10 min) ON CONFLICT (reservation_id) DO NOTHING` в същата транзакция плюс outbox ред, и `COMMIT`. За Борис същият UPDATE връща "2 реда", защото 4 октомври вече е на нула; засегнатите редове са по-малко от нощите, транзакцията се връща с `ROLLBACK` и той получава 409 с предложение за други дати. Всичко това е в един шард, защото всички редове на хотела живеят заедно по `hotel_id`. Анна въвежда картата; Reservation Service вика Payment по gRPC, при `authorized` прави `UPDATE reservations SET state = 'CONFIRMED' WHERE state = 'HELD'` и записва събитие. Outbox relay-ът пуска `reservation-created` в Kafka: един консуматор трие `avail:H-17:DOUBLE:*` от Redis, друг праща имейла, трети казва на channel manager-а на хотела да намали стаите в Booking и Expedia.
+
+**Изтекъл hold и анулиране.** Борис от друг хотел е взел стая, но е затворил таба, без да плати. Инвентарът му е намален, резервацията е `HELD` с `expires_at` след 10 минути. Reaper Job се събужда на всяка минута, взима lease в Redis (за да не работят два reaper-а едновременно и да върнат стаята два пъти) и прави `UPDATE reservations SET state = 'EXPIRED' WHERE state = 'HELD' AND expires_at < now() RETURNING ...`, после връща `available + 1` за всяка нощ на върнатите резервации и записва събитие. Стаята се появява пак в търсенето след инвалидацията на кеша. Друг гост с `CONFIRMED` резервация анулира седмица преди датата: политиката е данни, не код ("безплатно до 7 дни преди, после 50% такса"), и се проверява спрямо локалното време на хотела, не UTC, иначе `expires_at` прескача деня. Ако датите са бъдещи, инвентарът се връща; refund-ът е отделна идемпотентна операция в Payment System; в `reservation_events` се записва `CANCELLED` с приложената политика, така че спорът след шест месеца се решава по лога, не по спомени. При промяна на дати се прави нова резервация плюс анулиране на старата в една транзакция, никога "първо анулирай, после резервирай", защото между двете стаята може да изчезне.
 
 ## Описание на архитектурата стъпка по стъпка
 

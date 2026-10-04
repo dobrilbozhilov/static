@@ -45,14 +45,14 @@ Kafka по приоритетен топик, Fan-out Step разширява е
 
 | # | Сървис | Какво прави | Как комуникира |
 | --- | --- | --- | --- |
-| 1 | **Public API** | Валидира събитието, записва `alerts` + `outbox` в една транзакция, връща 202 | REST от продуктите; SQL към Postgres |
-| 2 | **Outbox Relayer** | Прехвърля outbox редовете в Kafka по приоритет и ги маркира обработени | pg-query-stream или CDC (Debezium) → Kafka `notifications-critical` / `notifications-bulk` |
-| 3 | **Fan-out Step** | Разширява едно събитие до списък получатели на партиди по 1000, дедупликира (SETNX), rate limit на потребител | Kafka consumer; sync към Rules и Template; Redis |
-| 4 | **Preference & Rules Service** | Канал, opt-out, тихи часове, throttling по потребител | Викан от Fan-out; Preferences DB с Redis кеш |
-| 5 | **Template Service** | Версионирани шаблони по канал и език | Викан от Fan-out |
-| 6 | **Notification Workers** (по канал) | HTTP към доставчика с rate limit, circuit breaker, retry с backoff; записва в in-app inbox | Kafka consumer; HTTPS към FCM/APNs, SES/SendGrid, Twilio/Vonage; DLQ при провал |
-| 7 | **Delivery Status Consumer** | Приема webhook-и `delivered`, `bounced`, `unsubscribed`, проверява подпис, идемпотентен по `provider_message_id` | HTTPS webhook endpoint; UPDATE в Postgres |
-| 8 | **Admin Service** | Чете DLQ, записва `failed_alerts`, аларма в Slack, Replay на партиди | Kafka consumer на `notifications-dlq`; publish обратно в основния топик |
+| 1 | **Public API** | Валидира събитието, записва `alerts` + `outbox` в една транзакция, връща 202 | HTTPS REST от продуктите; една SQL транзакция в Postgres (синхронно); не пише в Kafka |
+| 2 | **Outbox Relayer** | Прехвърля outbox редовете в Kafka по приоритет и ги маркира обработени | Чете Postgres през `pg-query-stream` (или Debezium чете WAL-а); Kafka producer към `notifications-critical` или `notifications-bulk` (асинхронно) |
+| 3 | **Fan-out Step** | Разширява едно събитие до списък получатели на партиди по 1000, дедупликира, rate limit на потребител | Kafka consumer (pull, с `pause()`/`resume()`); gRPC към Preference & Rules и Template Service (синхронно, в рамките на обработката); Redis `SET NX` и sliding window; Kafka producer на партидите към топиците на worker-ите |
+| 4 | **Preference & Rules Service** | Канал, opt-out, тихи часове, throttling по потребител | gRPC от Fan-out; Redis кеш пред SQL към Preferences DB |
+| 5 | **Template Service** | Версионирани шаблони по канал и език | gRPC от Fan-out; шаблоните в Postgres с кеш в паметта |
+| 6 | **Notification Workers** (по канал) | HTTP към доставчика с rate limit, circuit breaker, retry с backoff; записва в in-app inbox | Kafka consumer (pull); HTTPS към FCM/APNs, SES/SendGrid, Twilio/Vonage; SQL INSERT в Inbox DB; Kafka producer към `notifications-retry` и `notifications-dlq` |
+| 7 | **Delivery Status Consumer** | Приема webhook-и `delivered`, `bounced`, `unsubscribed`, проверява подпис, идемпотентен по `provider_message_id` | HTTPS webhook endpoint, викан от доставчиците (асинхронно, at-least-once); SQL UPDATE в Postgres |
+| 8 | **Admin Service** | Чете DLQ, записва `failed_alerts`, аларма в Slack, Replay на партиди | Kafka consumer `notifications-dlq`; SQL; HTTPS към Slack; Kafka producer обратно в основния топик при Replay |
 
 ### Хранилища
 
@@ -66,10 +66,18 @@ Kafka по приоритетен топик, Fan-out Step разширява е
 
 ### Комуникация, backpressure и патерни
 
-- **Синхронно:** само API → Postgres и webhook endpoint-ът (бърз 200, обработка после).
+- **Синхронно:** само API → Postgres и webhook endpoint-ът (бърз 200, обработка после); gRPC между Fan-out и помощните сървиси.
 - **Асинхронно:** цялата доставка през Kafka; webhook-ите от доставчиците са обратният асинхронен канал.
 - **Backpressure:** две точки. Relayer-ът чете със streams, за да не препълни RAM. Fan-out консуматорът регулира с batch size и `pause()/resume()`. Отделно: отделни топици и worker pool-ове по приоритет, за да не бави кампания OTP кода; retry топик вместо блокиране на партицията; circuit breaker към доставчика.
 - **Патерни:** Transactional Outbox / CDC, priority queues, идемпотентен консуматор (exactly-once не съществува), retry с exponential backoff и jitter, DLQ + Replay, failover между доставчици, dry-run и kill switch.
+
+### Flow: сценариите стъпка по стъпка
+
+**OTP код за вход.** Auth сървисът на продукта праща `POST /notifications` с `event_type = otp`, получател и кода. Public API валидира и в една SQL транзакция записва реда в `alerts` и реда в `outbox`. Връща 202 за милисекунди: нищо не е изпратено, но нищо не може да се загуби, защото двата записа са атомарни (ако пишехме първо в базата, после в Kafka, срив между двете би оставил известие, което никой не праща). Outbox Relayer чете новия ред като поток и го публикува в `notifications-critical` (отделен топик от маркетинга, с отделни worker-и и отделна квота при доставчика). Fan-out Step го тегли от Kafka; получателят е един, така че само пита Preference & Rules по gRPC (OTP е транзакционно, игнорира opt-out и тихи часове), прави `SET NX notification:<event>:<user>:sms` в Redis срещу дублиране, иска от Template Service текста на езика на потребителя и пуска готовото съобщение към SMS worker-ите. SMS Worker-ът вика Twilio по HTTPS с dedup ключ (ако retry-нем, Twilio не праща втори SMS, който се плаща отделно). При 2xx записва `SENT` и commit-ва offset-а. След секунди Twilio вика нашия webhook endpoint с `delivered`; Delivery Status Consumer проверява подписа, записва събитието с `INSERT ... ON CONFLICT DO NOTHING` по `provider_message_id` (доставчиците препращат webhook-и) и обновява статуса. Целта е P99 от събитие до `DELIVERED` под 10 секунди.
+
+**Кампания до 2 милиона души.** Маркетингът пуска "Нов курс" до всички абонати. Това е едно събитие с правило за получатели, не 2 милиона заявки. Relayer-ът го слага в `notifications-bulk`. Fan-out Step взима snapshot на списъка абонати и го разбива на партиди по 1 000 получателя, всяка партида отделно съобщение в Kafka, така че 2 000 партиди се разпределят между всички worker-и. За всеки получател проверява предпочитанията (маркетинг изисква съгласие, тихите часове отлагат, throttling спира 37-мото известие за деня и го сгъва в дайджест), дедупликира и рендерира шаблон. Понеже е bulk, worker-ите пращат с rate limit към доставчика и ако той отговори 429, забавят. Ако междувременно пристигне OTP, той минава по `notifications-critical` с отделни worker-и и не чака зад кампанията. При инцидент при доставчика първото действие е пауза на bulk consumer group-а, което освобождава цялата квота за critical. Преди реалното пускане кампанията минава в dry-run: fan-out и правилата се изпълняват, но worker-ът пише в таблица `would_send` вместо да вика доставчика, и маркетингът вижда точния брой.
+
+**Провал, DLQ и Replay.** SendGrid връща 503 за имейл. Worker-ът не блокира партицията с чакане, а пуска съобщението в `notifications-retry` с `next_attempt_at` след 2, 4, 8 секунди (exponential backoff с jitter) и commit-ва offset-а. След 5 неуспешни опита, или веднага при постоянна грешка (невалиден адрес, 4xx), съобщението отива в `notifications-dlq` с оригиналния payload и грешката. Admin Service го чете, записва го във `failed_alerts` и вдига аларма в Slack. При половин милион провалени на ден това е ежедневен обем, не изключение. Когато доставчикът се оправи, някой натиска "Replay" в Admin Dashboard: Admin Service публикува провалените обратно в основния топик на партиди с настройваема скорост, за да не направи самопричинен DDoS върху доставчика. Съобщенията минават пак през дедупликацията и проверяват `expires_at`, така че вчерашен OTP не се праща днес.
 
 ## Стъпки в потока
 

@@ -48,12 +48,12 @@ flowchart TD
 
 | # | Сървис | Какво прави | Как комуникира |
 | --- | --- | --- | --- |
-| 1 | **Scheduler API** | CRUD на job-ове, валидация на cron и timezone, `run-now`, история на runs | REST; SQL към Postgres |
-| 2 | **Scheduler leader** (един активен) | На всяка секунда `SELECT due ... FOR UPDATE SKIP LOCKED`, създава run `QUEUED`, смята `next_run_at`, публикува | Lease в Redis (`SET NX PX 15000`, renew на 5 s); Kafka `jobs-due` с ключ `job_id` |
-| 3 | **Scheduler standby** | Чака lease-а; поема при изтичане с нов epoch | Опитва `SET NX` в Redis |
-| 4 | **Worker pool** | Дедупликира по `run_id` (SETNX), условен `UPDATE run RUNNING WHERE QUEUED`, вика целта с `Idempotency-Key = run_id`, heartbeat на 10 s, timeout с `AbortController` | Kafka consumer group; HTTPS или gRPC към целевия сървис; SQL за статус |
-| 5 | **Reaper** | Изтекли heartbeat-и и timeout-и → `TIMED_OUT`, re-enqueue с backoff; misfire политики | Периодичен, с lease; SQL; publish retry в Kafka |
-| 6 | **Observability + Notification** | Lateness, дълбочина на опашка, SLA miss, canary job; известие при fail | Kafka consumer на `run-events` |
+| 1 | **Scheduler API** | CRUD на job-ове, валидация на cron и timezone, `run-now`, история на runs | HTTPS REST от клиентите и другите сървиси; SQL към Postgres (синхронно) |
+| 2 | **Scheduler leader** (един активен) | На всяка секунда `SELECT due ... FOR UPDATE SKIP LOCKED`, създава run `QUEUED`, смята `next_run_at`, публикува | Redis `SET lease NX PX 15000` и подновяване на 5 s (RESP); SQL транзакция в Postgres на всяка секунда; Kafka producer `jobs-due` с ключ `job_id` (асинхронно) |
+| 3 | **Scheduler standby** | Чака lease-а; поема при изтичане с нов epoch | Опитва Redis `SET NX` на всеки няколко секунди; нищо друго, докато не стане leader |
+| 4 | **Worker pool** | Дедупликира по `run_id`, условен `UPDATE run RUNNING WHERE QUEUED`, вика целта с `Idempotency-Key = run_id`, heartbeat на 10 s, timeout с `AbortController` | Kafka consumer group `jobs-due` (pull); Redis `SET run:<id> NX`; SQL UPDATE за статус и heartbeat; HTTPS webhook или gRPC към целевия сървис (синхронно, с timeout) |
+| 5 | **Reaper** | Изтекли heartbeat-и и timeout-и → `TIMED_OUT`, re-enqueue с backoff; misfire политики | Периодичен процес с Redis lease; SQL UPDATE; Kafka producer за retry |
+| 6 | **Observability + Notification** | Lateness, дълбочина на опашка, SLA miss, canary job; известие при fail | Kafka consumer `run-events` (pull); Prometheus метрики; HTTPS към Slack или email |
 
 ### Хранилища
 
@@ -65,10 +65,18 @@ flowchart TD
 
 ### Комуникация, backpressure и патерни
 
-- **Синхронно:** REST за управление; worker → целеви сървис.
+- **Синхронно:** HTTPS REST за управление; worker → целеви сървис по HTTPS или gRPC.
 - **Асинхронно:** leader → Kafka → worker-и; worker-и → `run-events` → мониторинг. Планировчикът не изпълнява, само публикува.
 - **Backpressure:** durable опашката разкача секундното сканиране от минутните изпълнения; worker-ите скалират по consumer lag; квота на тенант в полет; jitter за "1 млн. job-а в 00:00"; `concurrency_policy` (`forbid`, `replace`) срещу натрупване на дълги job-ове.
 - **Патерни:** leader с lease + fencing epoch, `FOR UPDATE SKIP LOCKED` като гаранция на ниво ред, идемпотентност на три слоя (Redis → условен UPDATE → идемпотентна цел), heartbeat + reaper, misfire политики, UTC навсякъде с DST-aware библиотека, партиции по време вместо DELETE. Temporal отговаря на "как да стигнем до края", не на "кога".
+
+### Flow: сценариите стъпка по стъпка
+
+**Нормално изпълнение.** Екипът създава job "дневен отчет" с cron `0 9 * * 1-5` в зона `Europe/Sofia`, payload с URL на отчета и timeout 10 минути. Scheduler API го записва в `jobs` с изчислен `next_run_at` в UTC (библиотеката знае за лятното часово време; ръчна аритметика тук е бъг два пъти годишно). В 9:00 Scheduler leader-ът, който държи lease-а в Redis и го подновява на всеки 5 секунди, прави своето секундно сканиране: `SELECT ... FROM jobs WHERE enabled AND next_run_at <= NOW() ORDER BY priority, next_run_at LIMIT 1000 FOR UPDATE SKIP LOCKED`. Заявката чете само върха на индекса, така че 10 милиона job-а и 300 узрели струват едно и също. В същата транзакция вмъква ред в `runs` със статус `QUEUED` и `run_id`, изчислява следващото `next_run_at` за понеделник и го записва. Commit. После публикува `{job_id, run_id, payload, deadline}` в Kafka `jobs-due`. Планировчикът не изпълнява нищо: ако изпълняваше, секундното сканиране щеше да спре за минути. Worker W1 тегли съобщението от Kafka (pull; при 1 милион job-а в 00:00 опашката поглъща пика, а worker-ите го обработват за минути), прави `SET run:<run_id> NX EX 3600` в Redis (дубликат от Kafka при redelivery би спрял тук) и `UPDATE runs SET status = 'RUNNING', worker_id = W1 WHERE id = $run_id AND status = 'QUEUED'`: 1 ред, задачата е негова (това е гаранцията, Redis е оптимизацията). Вика целевия сървис `POST /reports/daily` по HTTPS с `Idempotency-Key: <run_id>` и на всеки 10 секунди обновява `heartbeat_at`. Целта връща 200; W1 записва `SUCCEEDED`, публикува събитие в `run-events` и commit-ва Kafka offset-а. Observability консуматорът измерва lateness: разликата между 9:00:00 и реалния старт, P99 под 5 секунди.
+
+**Паднал worker.** Същият сценарий, но W1 умира точно след като е извикал целта и преди да запише `SUCCEEDED`. Heartbeat-ът спира. След 30 секунди Reaper-ът (също с lease, за да е един) намира `RUNNING` ред с `heartbeat_at` по-стар от 30 s, маркира го `TIMED_OUT`, увеличава `attempt` и публикува retry в Kafka с exponential backoff и jitter. Worker W2 го тегли, прави същия условен UPDATE (минава, защото статусът е върнат в `QUEUED`) и вика целта с **същия** `Idempotency-Key = run_id`. Целевият сървис вижда ключа, разпознава, че отчетът вече е генериран, и връща същия резултат, без да го прави втори път. W2 записва `SUCCEEDED`. Ако целта не беше идемпотентна, отчетът щеше да се направи два пъти и никакъв планировчик не може да го предотврати: планировчикът гарантира "поне веднъж", "точно веднъж" е отговорност на задачата. Това изречение трябва да се каже изрично. Ако потребител поиска отмяна по средата, `POST /runs/:id/cancel` само записва флаг; worker-ът го вижда при следващия heartbeat и прекъсва работата с `AbortController`, защото "CANCELLED" в базата не спира реална работа сам по себе си.
+
+**Планировчикът е бил долу и два планировчика едновременно.** Leader-ът пада в 02:00 и никой не го замества 40 минути (например Redis е бил недостъпен). Standby-ят най-после взима lease-а с epoch 2 и започва да сканира. Job с интервал 5 минути има 8 пропуснати момента (misfire). Какво се прави зависи от политиката на самия job: `fire_once` пуска едно изпълнение веднага и продължава по график (синхронизации, "докъде сме стигнали"), `skip` не пуска нищо (известия, за които закъснялото е по-лошо от липсващото), `fire_all` пуска всичките 8 последователно (отчети по интервали, където всеки прозорец трябва да съществува). Реализацията е в изчисляването на `next_run_at`. Междувременно старият leader се "събужда" от GC пауза и смята, че още е leader. Три защити го спират: не е успял да поднови lease-а, затова спира да сканира сам; записите му носят epoch 1, който базата отхвърля като стар (fencing); и дори ако двамата сканират в една и съща секунда, `FOR UPDATE SKIP LOCKED` прави невъзможно двамата да вземат един и същ ред. Ако все пак един и същ `run_id` стигне до два worker-а по Kafka, условният `UPDATE ... WHERE status = 'QUEUED'` пуска само единия. Отговорът "имам lock" без второто и третото ниво е mid-level отговор.
 
 ## Описание на архитектурата стъпка по стъпка
 

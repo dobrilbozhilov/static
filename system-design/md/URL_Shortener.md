@@ -35,11 +35,11 @@ edge-а, който обслужва голяма част от кликовет
 
 | # | Сървис | Какво прави | Как комуникира |
 | --- | --- | --- | --- |
-| 1 | **API Gateway** | Приема `POST /shorten`, auth, rate limit по потребител, идемпотентност по `Idempotency-Key` | REST от клиента; вътрешно HTTP към URL Service |
-| 2 | **URL Service** | Валидира URL-а, проверява го в Safe Browsing, dedupe, custom alias, записва двойката key → url | Sync към ID Generator и Link DB; write-through в Redis |
-| 3 | **ID Generator** | Дава уникални ключове: Snowflake (без координация) или KGS с предварително генерирани партиди | Вътрешен RPC или библиотека в процеса; KGS раздава партиди по 10 000 |
-| 4 | **Redirect Service** | `GET /:key`: Redis → Bloom filter → DB, връща 301/302 | Чете Redis и DB синхронно; публикува `url-clicked` в Kafka, без да чака |
-| 5 | **Analytics Worker** | Чете кликовете на партиди, агрегира, брои уникални с HyperLogLog | Kafka consumer group; batch insert в ClickHouse |
+| 1 | **API Gateway** | Приема `POST /shorten`, auth, rate limit по потребител, идемпотентност по `Idempotency-Key` | Приема HTTPS REST от клиента; препраща към URL Service по gRPC (синхронно) |
+| 2 | **URL Service** | Валидира URL-а, проверява го в Safe Browsing, dedupe, custom alias, записва двойката key → url | gRPC към ID Generator (синхронно); SQL INSERT в Link DB; `SET` в Redis (write-through); HTTPS към Safe Browsing API |
+| 3 | **ID Generator** | Дава уникални ключове: Snowflake (без координация) или KGS с предварително генерирани партиди | gRPC `GetId` / `GetBatch` (синхронно); при KGS всеки app сървър държи партида от 10 000 ключа в паметта си |
+| 4 | **Redirect Service** | `GET /:key`: Redis → negative cache → Bloom filter → DB, връща 301/302 | HTTPS от CDN при edge miss; Redis `GET` и SQL `SELECT` (синхронно); Kafka producer `url-clicked` (fire-and-forget, асинхронно) |
+| 5 | **Analytics Worker** | Чете кликовете на партиди, агрегира, брои уникални с HyperLogLog | Kafka consumer group (pull, асинхронно); batch INSERT в ClickHouse; `PFADD` и `INCR` в Redis |
 
 Отпред стоят CDN/Edge (кешира 302 с кратък TTL) и Load balancer. Не са наши сървиси, но поемат по-голямата част от четенето.
 
@@ -55,10 +55,20 @@ edge-а, който обслужва голяма част от кликовет
 
 ### Комуникация, backpressure и патерни
 
-- **Синхронно:** REST от клиента. Пътят на четене е CDN → Redis → DB, всеки слой поема miss-овете на предния.
+- **Синхронно:** HTTPS REST от клиента, gRPC между сървисите. Пътят на четене е CDN → Redis → DB, всеки слой поема miss-овете на предния.
 - **Асинхронно:** кликовете отиват в Kafka; пренасочването никога не чака аналитиката.
-- **Backpressure:** Kafka е буферът между 100k RPS четене и ClickHouse; Analytics Worker-ът пише на партиди и изостава (consumer lag), вместо да бави редиректа. Rate limit при създаване пази ключовото пространство.
+- **Backpressure:** Kafka е буферът между 100k RPS четене и ClickHouse; Analytics Worker-ът тегли на партиди и изостава (consumer lag), вместо да бави редиректа. Rate limit при създаване пази ключовото пространство.
 - **Патерни:** cache-aside с write-through за новите ключове, negative caching + Bloom filter срещу cache penetration, single-flight + TTL jitter срещу stampede, идемпотентно създаване, lazy deletion за изтекли линкове.
+
+### Flow: сценариите стъпка по стъпка
+
+**Добавяне на линк.** Потребителят пише дълъг URL и натиска "Съкрати". Браузърът праща `POST /api/v1/shorten` с уникален `Idempotency-Key` (UUID, генериран от клиента, за да не се създадат два линка при повторен опит след лоша мрежа). Load balancer-ът го праща към API Gateway, който проверява кой е потребителят (JWT), дали не е надхвърлил лимита си (например 100 линка на час, брояч в Redis) и дали същият ключ вече не е обработен. После вика URL Service по gRPC. URL Service валидира URL-а, пита Safe Browsing дали не е фишинг и иска уникално ID от ID Generator (при Snowflake това е 64-битово число от време + worker + пореден номер, при KGS сервизът вече има партида готови ключове в паметта си и просто взима следващия). Числото се кодира в Base62 и става 7-символен ключ. URL Service записва реда `{short_key, original_url, user_id, expires_at}` в Link DB и веднага след това го записва и в Redis (write-through: новият линк най-вероятно ще бъде кликнат в следващите минути, така че първият клик не бива да е cache miss). Връща 201 с краткия URL.
+
+**Отваряне на линк.** Някой кликва `short.ly/aX9kL2m`. Заявката първо стига до CDN edge-а. Ако той има кеширан 302 отговор за този ключ (с TTL около минута), го връща сам и до нашите сървъри не стига нищо. При edge miss заявката отива до Redirect Service. Той пита Redis за `short_key`. При hit Redis го връща за под милисекунда и този ключ става "най-скоро използван" в LRU списъка (ако е бил на 40-то място по давност, сега е на първо, така че горещите линкове никога не се изхвърлят от кеша). При miss Redirect Service проверява negative cache (отделен ключ "този short_key не съществува" с TTL около минута), за да не стига до базата за ключ, за който вече знаем, че го няма. Ако и там го няма, пита Bloom filter-а: ако той каже "със сигурност не съществува", връщаме 404, без да пипаме базата. Ако каже "може би съществува", правим `SELECT` в Link DB. Намерен ли е, записваме го в Redis с TTL (следващият клик ще е hit) и връщаме 302 с `Location: original_url`. Накрая, без да чака, Redirect Service публикува събитие `url-clicked` в Kafka с време, държава и устройство.
+
+**Грешен или деактивиран линк.** Ако базата върне празен резултат (например бот сканира `aX9kL2n`, `aX9kL2o` и така нататък), Redirect Service записва ключа в negative cache с TTL около минута и връща 404. Следващият опит със същия ключ спира още в Redis. Така cache penetration атаката удря базата най-много веднъж на минута на ключ, а rate limit на 404 отговорите по IP спира сканирането изобщо. Деактивираният линк (фишинг) е различен случай: редът остава в базата с `is_active = false`, ключът се трие от Redis с `DEL`, а CDN-ът го забравя до минута заради краткия TTL.
+
+**Аналитиката след клика.** Analytics Worker-ът чете събитията от Kafka на партиди (pull: консуматорът сам решава колко да вземе наведнъж, което е естествен backpressure, защото ако ClickHouse е бавен, worker-ът просто изостава, а Kafka пази събитията). За всяко събитие прави `PFADD uniques:<key>` в Redis (HyperLogLog брои уникални посетители в 12 KB на ключ) и `INCR clicks:<key>`, а на всеки няколко секунди записва партида редове в ClickHouse за агрегациите по държава и устройство. Dashboard-ът на собственика чете бързите броячи от Redis и точните агрегати от ClickHouse.
 
 ## Описание на архитектурата стъпка по стъпка
 
