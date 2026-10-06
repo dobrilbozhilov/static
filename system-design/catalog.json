@@ -1,0 +1,103 @@
+{
+  "title": "Каталог с патерни",
+  "eyebrow": "The Catalog",
+  "lead": "Архитектурните патерни, от които са сглобени системите в наръчника, обяснени просто: какъв проблем решават, как работят, кога да ги ползваш и къде се чупят. Имената са оставени на английски, защото така ще ги срещнеш в документации и интервюта. Основата е каталогът на Microsoft с облачни патерни, допълнен с патерните, които се появяват в документите тук, но липсват там. Семействата са наше групиране.",
+  "families": [
+    {
+      "id": "resilience",
+      "name": "Resilience",
+      "tagline": "Оцеляване при грешки и претоварване",
+      "patterns": [
+        { "slug": "retry", "name": "Retry", "tagline": "Опитай пак, но умно", "related": ["timeout", "circuit-breaker", "idempotent-consumer", "fallback", "dead-letter-queue"] },
+        { "slug": "timeout", "name": "Timeout", "tagline": "Не чакай вечно", "related": ["retry", "circuit-breaker", "bulkhead", "fallback"] },
+        { "slug": "circuit-breaker", "name": "Circuit Breaker", "tagline": "Спри да удряш паднала услуга", "related": ["retry", "timeout", "fallback", "health-endpoint-monitoring", "bulkhead"] },
+        { "slug": "bulkhead", "name": "Bulkhead", "tagline": "Отделни прегради, за да не потъне целият кораб", "related": ["circuit-breaker", "timeout", "load-shedding", "rate-limiting"] },
+        { "slug": "rate-limiting", "name": "Rate Limiting", "tagline": "Толкова заявки в минута, не повече", "related": ["throttling", "load-shedding", "gatekeeper", "backpressure"] },
+        { "slug": "throttling", "name": "Throttling", "tagline": "Забави, вместо да откажеш", "related": ["rate-limiting", "load-shedding", "autoscaling", "queue-based-load-leveling"] },
+        { "slug": "load-shedding", "name": "Load Shedding", "tagline": "Пусни баласта, спаси важното", "related": ["rate-limiting", "throttling", "priority-queue", "bulkhead"] },
+        { "slug": "backpressure", "name": "Backpressure", "tagline": "Бавният казва на бързия да изчака", "related": ["queue-based-load-leveling", "throttling", "rate-limiting", "load-shedding"] },
+        { "slug": "fallback", "name": "Fallback (Graceful Degradation)", "tagline": "Резервен план, вместо празен екран", "related": ["circuit-breaker", "timeout", "retry", "cache-aside"] },
+        { "slug": "health-endpoint-monitoring", "name": "Health Endpoint Monitoring", "tagline": "Жив ли си и готов ли си за работа", "related": ["circuit-breaker", "autoscaling", "blue-green-canary", "service-discovery"] },
+        { "slug": "leader-election", "name": "Leader Election", "tagline": "Точно един командва", "related": ["distributed-lock", "scheduler-agent-supervisor", "sequential-convoy"] },
+        { "slug": "distributed-lock", "name": "Distributed Lock (lease + fencing)", "tagline": "Един ключ за много машини", "related": ["leader-election", "optimistic-concurrency", "idempotent-consumer"] },
+        { "slug": "compensating-transaction", "name": "Compensating Transaction", "tagline": "Отмени стъпка по стъпка", "related": ["saga", "idempotent-consumer", "transactional-outbox"] },
+        { "slug": "saga", "name": "Saga", "tagline": "Дълга транзакция от малки стъпки", "related": ["compensating-transaction", "choreography", "transactional-outbox", "idempotent-consumer", "scheduler-agent-supervisor"] },
+        { "slug": "scheduler-agent-supervisor", "name": "Scheduler Agent Supervisor", "tagline": "Планировчик, изпълнители и надзорник", "related": ["saga", "compensating-transaction", "leader-election", "retry"] }
+      ]
+    },
+    {
+      "id": "messaging",
+      "name": "Messaging",
+      "tagline": "Разделяне на работата с опашки и събития",
+      "patterns": [
+        { "slug": "queue-based-load-leveling", "name": "Queue-Based Load Leveling", "tagline": "Опашката изглажда пиковете", "related": ["competing-consumers", "backpressure", "throttling", "asynchronous-request-reply"] },
+        { "slug": "competing-consumers", "name": "Competing Consumers", "tagline": "Много работници, една опашка", "related": ["queue-based-load-leveling", "idempotent-consumer", "sequential-convoy", "autoscaling"] },
+        { "slug": "priority-queue", "name": "Priority Queue", "tagline": "Важното минава напред", "related": ["queue-based-load-leveling", "load-shedding", "competing-consumers"] },
+        { "slug": "publisher-subscriber", "name": "Publisher-Subscriber", "tagline": "Обяви събитие, без да знаеш кой слуша", "related": ["choreography", "messaging-bridge", "transactional-outbox", "idempotent-consumer"] },
+        { "slug": "idempotent-consumer", "name": "Idempotent Consumer", "tagline": "Едно и също съобщение два пъти не вреди", "related": ["retry", "competing-consumers", "transactional-outbox", "dead-letter-queue"] },
+        { "slug": "transactional-outbox", "name": "Transactional Outbox", "tagline": "Запиши и събитието в същата транзакция", "related": ["publisher-subscriber", "idempotent-consumer", "change-data-capture", "saga"] },
+        { "slug": "dead-letter-queue", "name": "Dead Letter Queue", "tagline": "Паркинг за съобщенията, които не минават", "related": ["retry", "idempotent-consumer", "competing-consumers", "quarantine"] },
+        { "slug": "sequential-convoy", "name": "Sequential Convoy", "tagline": "Подредба в групата, паралелност между групите", "related": ["competing-consumers", "sharding", "leader-election"] },
+        { "slug": "asynchronous-request-reply", "name": "Asynchronous Request-Reply", "tagline": "Прието, ела по-късно за резултата", "related": ["queue-based-load-leveling", "claim-check", "publisher-subscriber"] },
+        { "slug": "claim-check", "name": "Claim Check", "tagline": "Прати номерчето, не целия багаж", "related": ["asynchronous-request-reply", "static-content-hosting", "valet-key"] },
+        { "slug": "pipes-and-filters", "name": "Pipes and Filters", "tagline": "Конвейер от малки стъпки", "related": ["competing-consumers", "queue-based-load-leveling", "choreography"] },
+        { "slug": "choreography", "name": "Choreography (vs Orchestration)", "tagline": "Всеки знае своята стъпка, без диригент", "related": ["saga", "publisher-subscriber", "scheduler-agent-supervisor", "transactional-outbox"] },
+        { "slug": "messaging-bridge", "name": "Messaging Bridge", "tagline": "Преводач между две опашки", "related": ["publisher-subscriber", "anti-corruption-layer", "strangler-fig"] }
+      ]
+    },
+    {
+      "id": "data",
+      "name": "Data",
+      "tagline": "Съхранение, оформяне и поднасяне на данни в мащаб",
+      "patterns": [
+        { "slug": "cache-aside", "name": "Cache-Aside", "tagline": "Първо кеша, после базата", "related": ["write-through-write-behind", "read-replicas", "materialized-view", "static-content-hosting"] },
+        { "slug": "write-through-write-behind", "name": "Write-Through / Write-Behind", "tagline": "Кешът участва и в писането", "related": ["cache-aside", "queue-based-load-leveling", "materialized-view"] },
+        { "slug": "read-replicas", "name": "Read Replicas", "tagline": "Копия на базата само за четене", "related": ["cache-aside", "cqrs", "sharding", "geode"] },
+        { "slug": "sharding", "name": "Sharding", "tagline": "Раздели данните на парчета по ключ", "related": ["index-table", "read-replicas", "sequential-convoy", "deployment-stamps"] },
+        { "slug": "index-table", "name": "Index Table", "tagline": "Втори указател за друго търсене", "related": ["sharding", "materialized-view", "cqrs"] },
+        { "slug": "materialized-view", "name": "Materialized View", "tagline": "Готов отговор, изчислен предварително", "related": ["cqrs", "event-sourcing", "cache-aside", "index-table"] },
+        { "slug": "cqrs", "name": "CQRS", "tagline": "Отделен модел за писане и за четене", "related": ["event-sourcing", "materialized-view", "read-replicas", "change-data-capture"] },
+        { "slug": "event-sourcing", "name": "Event Sourcing", "tagline": "Пази какво се е случило, не само какво е сега", "related": ["cqrs", "materialized-view", "transactional-outbox", "saga"] },
+        { "slug": "change-data-capture", "name": "Change Data Capture", "tagline": "Слушай промените в базата", "related": ["transactional-outbox", "cqrs", "materialized-view", "messaging-bridge"] },
+        { "slug": "optimistic-concurrency", "name": "Optimistic Concurrency", "tagline": "Пиши без лок, провери версията", "related": ["distributed-lock", "idempotent-consumer", "event-sourcing"] },
+        { "slug": "valet-key", "name": "Valet Key", "tagline": "Временен ключ направо към хранилището", "related": ["static-content-hosting", "claim-check", "gateway-offloading"] },
+        { "slug": "static-content-hosting", "name": "Static Content Hosting", "tagline": "Статичните файлове от CDN, не от сървъра", "related": ["valet-key", "cache-aside", "gateway-offloading", "geode"] }
+      ]
+    },
+    {
+      "id": "gateways",
+      "name": "Gateways & integration",
+      "tagline": "Границите между клиенти, услуги и стари системи",
+      "patterns": [
+        { "slug": "gateway-routing", "name": "Gateway Routing", "tagline": "Един вход, много услуги отзад", "related": ["gateway-aggregation", "gateway-offloading", "backends-for-frontends", "strangler-fig", "service-discovery"] },
+        { "slug": "gateway-aggregation", "name": "Gateway Aggregation", "tagline": "Една заявка вместо пет", "related": ["gateway-routing", "backends-for-frontends", "materialized-view"] },
+        { "slug": "gateway-offloading", "name": "Gateway Offloading", "tagline": "Общата работа на едно място", "related": ["gateway-routing", "gatekeeper", "sidecar", "static-content-hosting"] },
+        { "slug": "backends-for-frontends", "name": "Backends for Frontends", "tagline": "Отделен backend за всяко приложение", "related": ["gateway-aggregation", "gateway-routing", "cqrs"] },
+        { "slug": "gatekeeper", "name": "Gatekeeper", "tagline": "Пазач пред вратата", "related": ["gateway-offloading", "rate-limiting", "federated-identity", "quarantine"] },
+        { "slug": "federated-identity", "name": "Federated Identity", "tagline": "Влез с друг акаунт", "related": ["gatekeeper", "gateway-offloading", "valet-key"] },
+        { "slug": "service-discovery", "name": "Service Discovery", "tagline": "Телефонен указател на услугите", "related": ["health-endpoint-monitoring", "gateway-routing", "service-mesh", "autoscaling"] },
+        { "slug": "ambassador", "name": "Ambassador", "tagline": "Пратеник, който говори с външния свят", "related": ["sidecar", "service-mesh", "retry", "circuit-breaker"] },
+        { "slug": "sidecar", "name": "Sidecar", "tagline": "Помощен процес до основния", "related": ["ambassador", "service-mesh", "gateway-offloading", "correlation-id-tracing"] },
+        { "slug": "service-mesh", "name": "Service Mesh", "tagline": "Sidecar до всяка услуга, управляван централно", "related": ["sidecar", "ambassador", "service-discovery", "circuit-breaker"] },
+        { "slug": "anti-corruption-layer", "name": "Anti-Corruption Layer", "tagline": "Преводач, който пази новия модел чист", "related": ["strangler-fig", "messaging-bridge", "gateway-routing"] },
+        { "slug": "strangler-fig", "name": "Strangler Fig", "tagline": "Замени старото парче по парче", "related": ["anti-corruption-layer", "gateway-routing", "feature-flags", "blue-green-canary"] }
+      ]
+    },
+    {
+      "id": "deployment",
+      "name": "Deployment & operations",
+      "tagline": "Пускане, мащабиране и поддръжка на системата",
+      "patterns": [
+        { "slug": "external-configuration-store", "name": "External Configuration Store", "tagline": "Настройките извън кода", "related": ["feature-flags", "deployment-stamps", "blue-green-canary"] },
+        { "slug": "feature-flags", "name": "Feature Flags", "tagline": "Пусни кода, включи функцията по-късно", "related": ["external-configuration-store", "blue-green-canary", "strangler-fig"] },
+        { "slug": "blue-green-canary", "name": "Blue-Green & Canary Releases", "tagline": "Нова версия без спиране и без страх", "related": ["feature-flags", "health-endpoint-monitoring", "gateway-routing", "deployment-stamps"] },
+        { "slug": "autoscaling", "name": "Autoscaling", "tagline": "Повече машини при трафик, по-малко в тишина", "related": ["health-endpoint-monitoring", "queue-based-load-leveling", "throttling", "competing-consumers"] },
+        { "slug": "deployment-stamps", "name": "Deployment Stamps", "tagline": "Копирай цялата система като печат", "related": ["geode", "sharding", "compute-resource-consolidation", "external-configuration-store"] },
+        { "slug": "geode", "name": "Geode", "tagline": "Една и съща система във всеки регион", "related": ["deployment-stamps", "read-replicas", "static-content-hosting", "gateway-routing"] },
+        { "slug": "compute-resource-consolidation", "name": "Compute Resource Consolidation", "tagline": "Събери малките задачи на една машина", "related": ["deployment-stamps", "bulkhead", "autoscaling"] },
+        { "slug": "quarantine", "name": "Quarantine", "tagline": "Провери, преди да пуснеш вътре", "related": ["gatekeeper", "dead-letter-queue", "blue-green-canary"] },
+        { "slug": "correlation-id-tracing", "name": "Correlation ID & Distributed Tracing", "tagline": "Проследи една заявка през всички услуги", "related": ["sidecar", "health-endpoint-monitoring", "service-mesh"] }
+      ]
+    }
+  ]
+}
