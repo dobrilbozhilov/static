@@ -13,7 +13,7 @@ concurrency:
 env:
   # Projects to build and publish. Each is a folder in the repo root with
   # "npm run build" producing dist/. Add a new project by appending its folder name.
-  PROJECTS: english claude-code claude-desktop ai-engineer system-design
+  PROJECTS: english claude-code claude-desktop ai-engineer system-design spring-boot
 
 jobs:
   build:

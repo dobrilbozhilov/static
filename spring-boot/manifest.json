@@ -1,0 +1,42 @@
+{
+  "title": "Spring Boot",
+  "lead": "Подредена документация за Spring Boot и Java: как се прави всяко нещо, което ти трябва, когато започваш сайт или микросървис. Routing, controllers, middleware, DTO, валидации, грешки, база данни с миграции и релации, сигурност, имейли, файлове, събития, сокети, cron и опашки, брокери, логове, тестове и деплой. Всеки документ има работещ Java 21 код, зависимостите, капаните и чеклист.",
+  "pages": [
+    { "file": "Project_Setup.md", "slug": "setup", "group": "Основи", "short": "Структура на проекта", "blurb": "Spring Initializr, Maven и Gradle, starters, слоеве и пакети, Beans и Dependency Injection, lifecycle, какво прави @SpringBootApplication." },
+    { "file": "Configuration_Profiles.md", "slug": "config", "group": "Основи", "short": "Конфигурация и профили", "blurb": "application.yml, профили, env променливи, secrets, @ConfigurationProperties с валидация, @Conditional beans, конфигурация по среда." },
+    { "file": "Routing.md", "slug": "routing", "group": "Основи", "short": "Routing", "blurb": "@RequestMapping и производните, path и query параметри, headers, content negotiation, версии на API, static resources, context path." },
+    { "file": "Controllers.md", "slug": "controllers", "group": "Основи", "short": "Controllers", "blurb": "@RestController срещу @Controller, ResponseEntity и статус кодове, request body, multipart, тънък контролер и service слой, async отговори." },
+    { "file": "Middleware.md", "slug": "middleware", "group": "Основи", "short": "Middleware: Filters, Interceptors, AOP", "blurb": "Servlet Filter, HandlerInterceptor и @Aspect: кое кога, ред на изпълнение, request id, CORS, rate limiting, логване на заявки." },
+    { "file": "DTO_Mapping.md", "slug": "dto", "group": "Основи", "short": "DTO и mapping", "blurb": "Records като DTO, MapStruct, entity срещу DTO, Jackson настройки, дати и пари, @JsonView, projection от базата." },
+    { "file": "Validation.md", "slug": "validation", "group": "Основи", "short": "Валидации", "blurb": "Bean Validation, @Valid и @Validated, групи, custom constraint, cross-field проверки, валидация на config и на path параметри, формат на грешките." },
+    { "file": "Exception_Handling.md", "slug": "errors", "group": "Основи", "short": "Грешки и ProblemDetail", "blurb": "@RestControllerAdvice, ProblemDetail по RFC 9457, домейн изключения, error codes, i18n на съобщенията, какво не се показва навън." },
+
+    { "file": "Database_ORM.md", "slug": "orm", "group": "Данни", "short": "База данни и ORM", "blurb": "Spring Data JPA и Hibernate: entities, repositories, JPQL и native заявки, Specifications, projections, N+1, open-in-view, auditing, JdbcClient като алтернатива." },
+    { "file": "Relations.md", "slug": "relations", "group": "Данни", "short": "Релации", "blurb": "OneToMany, ManyToOne, ManyToMany, OneToOne, fetch стратегии, cascade и orphanRemoval, EntityGraph, equals и hashCode, двупосочни връзки без изненади." },
+    { "file": "Transactions.md", "slug": "transactions", "group": "Данни", "short": "Транзакции и locking", "blurb": "@Transactional отвътре, propagation и isolation, rollback правила, self-invocation капанът, read-only, optimistic и pessimistic locking, retry при конфликт." },
+    { "file": "Migrations.md", "slug": "migrations", "group": "Данни", "short": "Миграции", "blurb": "Flyway и Liquibase: именуване, versioned и repeatable, baseline, миграции без downtime, проверка в CI, миграции в тестовете." },
+    { "file": "Seeding.md", "slug": "seeding", "group": "Данни", "short": "Seeding", "blurb": "Начални данни по среда: Flyway seed скриптове, CommandLineRunner, идемпотентни seeds, тестови данни с Datafaker, какво не се seed-ва в production." },
+    { "file": "Pagination.md", "slug": "pagination", "group": "Данни", "short": "Pagination", "blurb": "Pageable, Page срещу Slice, сортиране с whitelist, keyset pagination за големи таблици, формат на отговора, pagination с филтри." },
+    { "file": "Caching.md", "slug": "caching", "group": "Данни", "short": "Кеширане", "blurb": "Spring Cache abstraction с Caffeine и Redis, @Cacheable и @CacheEvict, TTL, ключове, инвалидация, cache stampede, HTTP кеш с ETag." },
+
+    { "file": "Authentication.md", "slug": "authentication", "group": "Сигурност", "short": "Authentication", "blurb": "Spring Security 6: SecurityFilterChain, login с парола, JWT access и refresh токени, OAuth2 login с Google, resource server, password hashing, тестове." },
+    { "file": "Authorization.md", "slug": "authorization", "group": "Сигурност", "short": "Authorization", "blurb": "Roles срещу authorities, URL правила, @PreAuthorize и method security, custom PermissionEvaluator, проверка за собственост, multi-tenant изолация." },
+    { "file": "Sessions.md", "slug": "sessions", "group": "Сигурност", "short": "Sessions и cookies", "blurb": "HttpSession, Spring Session с Redis, cookie настройки, CSRF, stateful срещу stateless, concurrent session control, logout и инвалидация." },
+
+    { "file": "Emails_Templates.md", "slug": "emails", "group": "Интеграции", "short": "Имейли и HTML шаблони", "blurb": "JavaMailSender, Thymeleaf шаблони за имейли и страници, inline изображения и прикачени файлове, async изпращане с retry, Mailpit за dev." },
+    { "file": "Files.md", "slug": "files", "group": "Интеграции", "short": "Файлове", "blurb": "Upload с MultipartFile, download и streaming, валидация на файлове, локално хранилище срещу S3 и MinIO, presigned URLs, големи файлове." },
+    { "file": "Events.md", "slug": "events", "group": "Интеграции", "short": "Events", "blurb": "ApplicationEventPublisher и @EventListener като EventEmitter, @Async слушатели, @TransactionalEventListener, ред и грешки, кога да минеш към брокер и outbox." },
+    { "file": "WebSockets.md", "slug": "websockets", "group": "Интеграции", "short": "WebSockets и SSE", "blurb": "Raw WebSocketHandler, STOMP с SimpleBroker и Redis relay, автентикация на handshake, изпращане към конкретен потребител, SSE като по-лека алтернатива." },
+    { "file": "Scheduling_Queues.md", "slug": "scheduling", "group": "Интеграции", "short": "Cron, @Async и опашки", "blurb": "@Scheduled с cron, ShedLock за много инстанции, @Async executors, Spring Retry, опашка от задачи в Postgres със SKIP LOCKED, JobRunr." },
+    { "file": "Message_Brokers.md", "slug": "brokers", "group": "Интеграции", "short": "Message brokers: Kafka, Redis, NATS", "blurb": "Spring Kafka producer и consumer, Redis pub/sub и streams, NATS с jnats, RabbitMQ накратко, идемпотентен consumer, DLT, Testcontainers." },
+    { "file": "HTTP_Clients.md", "slug": "http-clients", "group": "Интеграции", "short": "HTTP клиенти", "blurb": "RestClient, WebClient, declarative @HttpExchange интерфейси, OpenFeign, timeouts, retry и circuit breaker с Resilience4j, тестване с WireMock." },
+    { "file": "Logging.md", "slug": "logging", "group": "Интеграции", "short": "Logging", "blurb": "SLF4J и Logback, нива по пакет, MDC и request id, структурирани JSON логове, логване на заявки, чувствителни данни, логове в тестовете." },
+    { "file": "Observability.md", "slug": "observability", "group": "Интеграции", "short": "Observability", "blurb": "Actuator endpoints, health и readiness, Micrometer метрики за Prometheus, custom метрики, tracing с OpenTelemetry, Grafana dashboard основи." },
+
+    { "file": "Testing.md", "slug": "testing", "group": "Качество и доставка", "short": "Testing", "blurb": "JUnit 5 и Mockito, @WebMvcTest, @DataJpaTest, @SpringBootTest, Testcontainers за Postgres и Kafka, WireMock, тестове със security, пирамида на тестовете." },
+    { "file": "API_Docs.md", "slug": "api-docs", "group": "Качество и доставка", "short": "API документация", "blurb": "springdoc-openapi, Swagger UI, анотации по контролери и DTO, групи, security схеми, генериране на клиенти от спецификацията." },
+    { "file": "Docker_Deploy.md", "slug": "deploy", "group": "Качество и доставка", "short": "Docker и деплой", "blurb": "Multi-stage Dockerfile и layered jar, Buildpacks, docker compose за dev, конфигурация през env, graceful shutdown, probes, JVM памет в контейнер." },
+    { "file": "New_Service_Checklist.md", "slug": "new-service", "group": "Качество и доставка", "short": "Нов сървис: чеклист", "blurb": "Стъпка по стъпка: от Initializr до production, с линкове към всеки документ, какво се настройва в първия ден и какво може да чака." }
+  ],
+  "external": []
+}

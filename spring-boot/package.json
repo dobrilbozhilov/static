@@ -1,0 +1,13 @@
+{
+  "name": "spring-boot-handbook",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "Builds dist/index.html from the markdown documents in md/",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "marked": "^15.0.12"
+  }
+}
