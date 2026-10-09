@@ -15,7 +15,7 @@
 
 `spring-boot-starter-cache` дава абстракцията и auto-configuration. Caffeine се закача автоматично, ако е в classpath-а; Redis също, ако има `spring-boot-starter-data-redis`. Когато са и двата, `spring.cache.type` избира кой е `CacheManager` по подразбиране.
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-cache</artifactId>
@@ -30,7 +30,7 @@
 </dependency>
 ```
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   cache:
     type: caffeine
@@ -50,8 +50,8 @@ management:
 
 `@EnableCaching` е задължителен, иначе `@Cacheable` е просто анотация, която нищо не прави:
 
-```java
-package com.example.shop.config;
+```java src/main/java/com/acme/shop/common/config/CacheConfig.java
+package com.acme.shop.common.config;
 
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Configuration;
@@ -63,7 +63,7 @@ public class CacheConfig {}
 
 За локална разработка Redis идва от compose файла. Spring Boot Docker Compose support (`spring-boot-docker-compose` dependency) разпознава `redis` image-а и настройва връзката сам:
 
-```yaml
+```yaml compose.yaml
 # compose.yaml
 services:
   redis:
@@ -79,8 +79,8 @@ services:
 
 Cache-aside през анотации: `@Cacheable` проверява кеша преди метода и записва резултата след него, `@CacheEvict` чисти при промяна. Кешираме DTO, не entity (защо, в секция 5).
 
-```java
-package com.example.shop.product;
+```java src/main/java/com/acme/shop/product/ProductService.java
+package com.acme.shop.product;
 
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
@@ -171,7 +171,7 @@ public void archive(Product product) { ... }
 
 `condition` се оценява преди метода и решава дали изобщо да се ползва кешът. `unless` се оценява след метода и решава дали резултатът да се запише:
 
-```java
+```java src/main/java/com/acme/shop/product/ProductService.java
 @Cacheable(cacheNames = "products",
            key = "#id",
            condition = "#includeDrafts == false",
@@ -183,7 +183,7 @@ public ProductView findById(UUID id, boolean includeDrafts) { ... }
 
 ### @CacheEvict: allEntries и beforeInvocation
 
-```java
+```java src/main/java/com/acme/shop/product/ProductService.java
 @CacheEvict(cacheNames = {"products", "productsByCategory"}, allEntries = true)
 public void reindexCatalog() { ... }
 
@@ -195,7 +195,7 @@ public void delete(UUID id) { ... }
 
 ### @Caching за няколко кеша
 
-```java
+```java src/main/java/com/acme/shop/product/ProductService.java
 @Caching(
     put = @CachePut(cacheNames = "products", key = "#result.id"),
     evict = @CacheEvict(cacheNames = "productsByCategory", allEntries = true))
@@ -207,7 +207,7 @@ public ProductView update(UUID id, UpdateProductRequest request) { ... }
 
 `@Cacheable` записва в кеша веднага щом методът върне, независимо дали транзакцията после ще commit-не. Ако `@CachePut` метод записва в базата и транзакцията rollback-не след това (например в извикващия метод), кешът съдържа стойност, която никога не е стигнала до базата. Решението е `TransactionAwareCacheManagerProxy`, който отлага put и evict до commit:
 
-```java
+```java src/main/java/com/acme/shop/common/config/CacheConfig.java
 @Bean
 public CacheManager cacheManager(CaffeineCacheManager caffeine) {
     return new TransactionAwareCacheManagerProxy(caffeine);
@@ -228,8 +228,8 @@ Caffeine е най-бързият JVM кеш и е правилният избо
 
 Продуктите са 10 000 и се сменят рядко, курсовете на валутите са 20 и се сменят на час, а резултатите от търсене са безброй и трябва да живеят секунди. Един spec не пасва на всичко:
 
-```java
-package com.example.shop.config;
+```java src/main/java/com/acme/shop/common/config/CaffeineConfig.java
+package com.acme.shop.common.config;
 
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.cache.caffeine.CaffeineCacheManager;
@@ -280,7 +280,7 @@ public class CaffeineConfig {
 
 ### Конфигурация с TTL на кеш
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   cache:
     type: redis
@@ -293,8 +293,8 @@ spring:
 
 Това дава еднакъв TTL за всички кешове. За различен TTL и за JSON сериализация ти трябва `RedisCacheManagerBuilderCustomizer`, който допълва auto-configured manager-а, без да го заменя:
 
-```java
-package com.example.shop.config;
+```java src/main/java/com/acme/shop/common/config/RedisCacheConfig.java
+package com.acme.shop.common.config;
 
 import org.springframework.boot.autoconfigure.cache.RedisCacheManagerBuilderCustomizer;
 import org.springframework.context.annotation.Bean;
@@ -370,7 +370,7 @@ Entity в кеша е най-честият бъг: `@Cacheable` метод вр
 
 Публикуваш събитие от сървиса, а listener-ът чисти кеша след commit. Така кешът не се чисти преждевременно при rollback и cache логиката не е размазана по сървисите. Механизмът на събитията е описан в [Events](Events.md).
 
-```java
+```java src/main/java/com/acme/shop/product/
 public record ProductChangedEvent(UUID productId, UUID categoryId) {}
 
 @Component
@@ -405,8 +405,8 @@ flowchart LR
     a -->|"UPDATE products"| db[("Postgres")]
 ```
 
-```java
-package com.example.shop.config;
+```java src/main/java/com/acme/shop/common/config/CacheInvalidationConfig.java
+package com.acme.shop.common.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -431,8 +431,8 @@ public class CacheInvalidationConfig {
 }
 ```
 
-```java
-package com.example.shop.cache;
+```java src/main/java/com/acme/shop/common/cache/
+package com.acme.shop.common.cache;
 
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
@@ -478,7 +478,7 @@ public class CacheInvalidationPublisher {
 
 ### Версионирани ключове
 
-```java
+```java src/main/java/com/acme/shop/product/ProductService.java
 @Cacheable(cacheNames = "catalog", key = "'v' + @catalogVersion.current() + ':' + #categoryId")
 public List<ProductView> byCategory(UUID categoryId) { ... }
 ```
@@ -498,7 +498,9 @@ Stampede (thundering herd) е моментът, в който популярен
 
 `sync = true` в `@Cacheable` се поддържа от Caffeine и Redis cache и е първото, което правиш за всеки скъп метод. Caffeine `refreshAfterWrite` не минава през Spring анотациите; нужен е директен `LoadingCache`:
 
-```java
+```java src/main/java/com/acme/shop/currency/ExchangeRateCache.java
+package com.acme.shop.currency;
+
 @Component
 public class ExchangeRateCache {
 
@@ -545,7 +547,9 @@ Write-through изглежда по-добре (няма miss след update), 
 
 Ръчен cache-aside с `RedisTemplate`, когато имаш нужда от контрол (jitter, компресия, сложен ключ):
 
-```java
+```java src/main/java/com/acme/shop/store/StoreConfigService.java
+package com.acme.shop.store;
+
 @Service
 public class StoreConfigService {
 
@@ -587,7 +591,9 @@ public class StoreConfigService {
 
 Не всичко в Redis е "кеш на метод". Броячи, rate limit прозорци, множества с TTL и разпределени lock-ове са атомарни операции, за които `StringRedisTemplate` е правилният инструмент.
 
-```java
+```java src/main/java/com/acme/shop/common/cache/RedisCounters.java
+package com.acme.shop.common.cache;
+
 @Component
 public class RedisCounters {
 
@@ -637,7 +643,7 @@ public class RedisCounters {
 
 Най-лесният вариант: filter, който хешира response body-то и праща `ETag`; при `If-None-Match` със същата стойност връща 304. Пести трафик, не пести работа на сървъра (body-то се генерира и после се изхвърля).
 
-```java
+```java src/main/java/com/acme/shop/common/config/WebConfig.java
 @Bean
 public FilterRegistrationBean<ShallowEtagHeaderFilter> etagFilter() {
     FilterRegistrationBean<ShallowEtagHeaderFilter> reg = new FilterRegistrationBean<>(new ShallowEtagHeaderFilter());
@@ -650,7 +656,7 @@ public FilterRegistrationBean<ShallowEtagHeaderFilter> etagFilter() {
 
 Ако entity има `@Version` или `updatedAt`, ETag може да се изчисли без да се генерира body, и 304 е почти безплатен:
 
-```java
+```java src/main/java/com/acme/shop/product/ProductController.java
 @GetMapping("/{id}")
 public ResponseEntity<ProductView> get(@PathVariable UUID id, WebRequest request) {
     ProductView product = productService.findById(id);
@@ -680,7 +686,7 @@ ETag: "17"
 
 ### Cache-Control за публични ресурси
 
-```java
+```java src/main/java/com/acme/shop/category/CategoryController.java
 @GetMapping("/categories")
 public ResponseEntity<List<CategoryView>> categories() {
     return ResponseEntity.ok()
@@ -695,7 +701,7 @@ public ResponseEntity<List<CategoryView>> categories() {
 
 Unit тестовете на сървис с mock repository не искат кеш: вторият `findById` в теста трябва да стигне до mock-а. Slice тестовете (`@DataJpaTest`, `@WebMvcTest`) и без това не зареждат `CacheAutoConfiguration`, но `@SpringBootTest` го зарежда.
 
-```yaml
+```yaml src/test/resources/application-test.yml
 # src/test/resources/application-test.yml
 spring:
   cache:
@@ -704,7 +710,9 @@ spring:
 
 Когато тестваш самия кеш (че `updatePrice` наистина evict-ва), оставяш `type: simple` (`ConcurrentHashMap`, без TTL) и проверяваш през `CacheManager`:
 
-```java
+```java src/test/java/com/acme/shop/product/ProductCacheTest.java
+package com.acme.shop.product;
+
 @SpringBootTest(properties = "spring.cache.type=simple")
 class ProductCacheTest {
 

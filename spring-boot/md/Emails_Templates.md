@@ -14,7 +14,7 @@
 
 ## 1. Зависимости и настройка
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-mail</artifactId>
@@ -32,7 +32,7 @@
 </dependency>
 ```
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   mail:
     host: ${MAIL_HOST:localhost}
@@ -64,7 +64,7 @@ app:
 
 Mailpit приема всичко на порт 1025 и го показва в web UI на 8025, без да изпраща нищо навън. MailHog върши същото, но не се поддържа активно.
 
-```yaml
+```yaml compose.yaml
 services:
   mailpit:
     image: axllent/mailpit:latest
@@ -91,8 +91,8 @@ services:
 
 Service, който рендерира Thymeleaf шаблон и го праща като HTML с plain text алтернатива.
 
-```java
-package com.example.orders.mail;
+```java src/main/java/com/acme/shop/common/mail/SmtpMailService.java
+package com.acme.shop.common.mail;
 
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
@@ -149,8 +149,8 @@ public class SmtpMailService implements MailService {
 }
 ```
 
-```java
-package com.example.orders.mail;
+```java src/main/java/com/acme/shop/common/mail/
+package com.acme.shop.common.mail;
 
 import org.springframework.core.io.Resource;
 
@@ -171,7 +171,9 @@ public record OrderSummary(Long id, String customerEmail, String customerName,
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/common/mail/MailProperties.java
+package com.acme.shop.common.mail;
+
 @ConfigurationProperties(prefix = "app.mail")
 public record MailProperties(String from, String replyTo, String baseUrl) {}
 ```
@@ -196,7 +198,9 @@ flowchart LR
 
 Boot автоконфигурира `SpringTemplateEngine` с resolver за `classpath:/templates/` и suffix `.html`, и го свързва с `MessageSource`, така че `#{...}` изразите работят и в имейли. За plain text шаблоните добавяш втори resolver в режим `TEXT`:
 
-```java
+```java src/main/java/com/acme/shop/common/config/MailTemplateConfig.java
+package com.acme.shop.common.config;
+
 @Configuration
 public class MailTemplateConfig {
 
@@ -219,7 +223,7 @@ Boot събира всички `ITemplateResolver` bean-ове в engine-а. `te
 
 ### Шаблон за потвърждение
 
-```html
+```html src/main/resources/templates/mail/order-confirmation.html
 <!-- src/main/resources/templates/mail/order-confirmation.html -->
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org" th:lang="${#locale.language}">
@@ -271,7 +275,7 @@ Boot събира всички `ITemplateResolver` bean-ове в engine-а. `te
 </html>
 ```
 
-```html
+```html src/main/resources/templates/mail/layout.html
 <!-- src/main/resources/templates/mail/layout.html -->
 <html xmlns:th="http://www.thymeleaf.org">
 <td th:fragment="header" style="padding:16px 24px;background:#111;color:#fff;font-size:18px;">
@@ -290,7 +294,7 @@ Boot събира всички `ITemplateResolver` bean-ове в engine-а. `te
 
 ### Plain text и subject
 
-```text
+```text src/main/resources/templates/text/order-confirmation.txt
 <!-- src/main/resources/templates/text/order-confirmation.txt -->
 [(#{mail.order.title(${order.customerName})})]
 
@@ -303,7 +307,7 @@ Boot събира всички `ITemplateResolver` bean-ове в engine-а. `te
 [(${baseUrl})]/orders/[(${order.id})]
 ```
 
-```text
+```text src/main/resources/templates/text/order-confirmation-subject.txt
 <!-- src/main/resources/templates/text/order-confirmation-subject.txt -->
 [(#{mail.order.subject(${order.id})})]
 ```
@@ -312,7 +316,7 @@ Boot събира всички `ITemplateResolver` bean-ове в engine-а. `te
 
 ### i18n
 
-```properties
+```properties src/main/resources/messages_bg.properties
 # src/main/resources/messages_bg.properties
 mail.order.subject=Поръчка {0} е приета
 mail.order.title=Здравей, {0}
@@ -331,7 +335,7 @@ Locale-ът на имейла е този на получателя, не на �
 
 ### Inline изображения и прикачени файлове
 
-```java
+```java src/main/java/com/acme/shop/common/mail/SmtpMailService.java
 var helper = new MimeMessageHelper(mime, true, "UTF-8");
 helper.setTo(to);
 helper.setSubject(subject);
@@ -371,11 +375,15 @@ sequenceDiagram
 
 ### Събитие след commit и async listener
 
-```java
+```java src/main/java/com/acme/shop/order/OrderPlaced.java
+package com.acme.shop.order;
+
 public record OrderPlaced(Long orderId) {}
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/OrderService.java
+package com.acme.shop.order;
+
 @Service
 public class OrderService {
 
@@ -396,7 +404,9 @@ public class OrderService {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/notification/OrderMailListener.java
+package com.acme.shop.notification;
+
 @Component
 public class OrderMailListener {
 
@@ -417,7 +427,9 @@ public class OrderMailListener {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/common/config/AsyncConfig.java
+package com.acme.shop.common.config;
+
 @Configuration
 @EnableAsync
 public class AsyncConfig {
@@ -443,7 +455,7 @@ public class AsyncConfig {
 
 Имейлът се записва като ред в същата транзакция като поръчката, а отделен scheduler го изпраща и маркира. Приложението може да падне във всеки момент и нищо не се губи.
 
-```sql
+```sql src/main/resources/db/migration/V20250110_1000__create_email_outbox.sql
 create table email_outbox (
     id              bigserial primary key,
     event_id        uuid        not null unique,
@@ -461,7 +473,9 @@ create table email_outbox (
 create index on email_outbox (status, next_attempt_at);
 ```
 
-```java
+```java src/main/java/com/acme/shop/notification/OrderMailOutboxWriter.java
+package com.acme.shop.notification;
+
 @Component
 public class OrderMailOutboxWriter {
 
@@ -487,7 +501,9 @@ public class OrderMailOutboxWriter {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/common/mail/EmailOutboxSender.java
+package com.acme.shop.common.mail;
+
 @Component
 public class EmailOutboxSender {
 
@@ -531,7 +547,9 @@ public class EmailOutboxSender {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/common/mail/EmailOutboxRepository.java
+package com.acme.shop.common.mail;
+
 public interface EmailOutboxRepository extends JpaRepository<EmailOutbox, Long> {
 
     @Query(value = """
@@ -554,7 +572,7 @@ public interface EmailOutboxRepository extends JpaRepository<EmailOutbox, Long> 
 
 Когато нямаш outbox, Spring Retry дава повторни опити директно върху `send`:
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.retry</groupId>
     <artifactId>spring-retry</artifactId>
@@ -565,7 +583,7 @@ public interface EmailOutboxRepository extends JpaRepository<EmailOutbox, Long> 
 </dependency>
 ```
 
-```java
+```java src/main/java/com/acme/shop/common/mail/SmtpMailService.java
 @Retryable(retryFor = MailException.class, maxAttempts = 3,
            backoff = @Backoff(delay = 2000, multiplier = 3))
 @Override
@@ -591,7 +609,7 @@ public void recover(MailException e, EmailMessage message) {
 
 Същият engine рендерира HTML страници, когато controller-ът връща име на view вместо JSON. Подходящо за admin панели и прости приложения без SPA.
 
-```yaml
+```yaml src/main/resources/application-dev.yml
 spring:
   thymeleaf:
     cache: false   # само в dev профила, за hot reload на шаблоните
@@ -603,8 +621,8 @@ spring:
 
 ### Controller, Model и форма
 
-```java
-package com.example.orders.web;
+```java src/main/java/com/acme/shop/product/
+package com.acme.shop.product;
 
 import jakarta.validation.Valid;
 import org.springframework.stereotype.Controller;
@@ -655,7 +673,7 @@ public record ProductForm(
 
 Redirect след успешен POST (Post-Redirect-Get) предотвратява повторно изпращане при refresh. `BindingResult` трябва да е непосредствено след `@ModelAttribute` параметъра, иначе Spring хвърля изключението вместо да го даде на теб; правилата за валидация са в [Валидации](Validation.md).
 
-```html
+```html src/main/resources/templates/admin/products/form.html
 <!-- src/main/resources/templates/admin/products/form.html -->
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: page(~{::title}, ~{::main})}">
@@ -681,7 +699,7 @@ Redirect след успешен POST (Post-Redirect-Get) предотвратя
 </html>
 ```
 
-```html
+```html src/main/resources/templates/layout.html
 <!-- src/main/resources/templates/layout.html -->
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org" th:fragment="page(title, content)">
@@ -708,7 +726,9 @@ Redirect след успешен POST (Post-Redirect-Get) предотвратя
 
 Рендерирането на шаблон е чиста функция от данни към string и се тества без Spring контекст, с ръчно сглобен engine, или с `@SpringBootTest` само за `SpringTemplateEngine`.
 
-```java
+```java src/test/java/com/acme/shop/common/mail/OrderConfirmationTemplateTest.java
+package com.acme.shop.common.mail;
+
 class OrderConfirmationTemplateTest {
 
     private final SpringTemplateEngine engine = new SpringTemplateEngine();
@@ -752,7 +772,9 @@ class OrderConfirmationTemplateTest {
 
 GreenMail вдига SMTP в JVM-а на теста; с Testcontainers може и Mailpit (`axllent/mailpit`, порт 1025 и REST API на 8025), но GreenMail е по-бърз и има Java API за проверка.
 
-```java
+```java src/test/java/com/acme/shop/common/mail/SmtpMailServiceIT.java
+package com.acme.shop.common.mail;
+
 @SpringBootTest
 class SmtpMailServiceIT {
 

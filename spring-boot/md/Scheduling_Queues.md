@@ -16,7 +16,7 @@
 
 `@Scheduled` и `@Async` са в `spring-context`, идват с всеки starter. Останалите са по избор:
 
-```xml
+```xml pom.xml
 <!-- ShedLock, секция 4 -->
 <dependency>
     <groupId>net.javacrumbs.shedlock</groupId>
@@ -54,7 +54,7 @@
 </dependency>
 ```
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   task:
     scheduling:
@@ -81,8 +81,8 @@ server:
 
 ## 2. Минимален работещ пример
 
-```java
-package com.example.shop.config;
+```java src/main/java/com/acme/shop/common/config/TaskConfig.java
+package com.acme.shop.common.config;
 
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableAsync;
@@ -95,8 +95,8 @@ public class TaskConfig {
 }
 ```
 
-```java
-package com.example.shop.maintenance;
+```java src/main/java/com/acme/shop/maintenance/TokenCleanupJob.java
+package com.acme.shop.maintenance;
 
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -170,8 +170,8 @@ public void relayOutboxConfigurable() { ... }
 
 Изключение в `@Scheduled` метод не спира следващите изпълнения. Spring го хваща, подава го на `ErrorHandler` на scheduler-а (по подразбиране логва на ERROR) и планира следващото. Проблемът е, че никой не гледа логовете. Сложи метрика:
 
-```java
-package com.example.shop.config;
+```java src/main/java/com/acme/shop/common/config/SchedulerErrorConfig.java
+package com.acme.shop.common.config;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.boot.task.ThreadPoolTaskSchedulerCustomizer;
@@ -214,7 +214,7 @@ flowchart LR
 
 ### Таблица и конфигурация
 
-```sql
+```sql src/main/resources/db/migration/V20250107_1105__create_shedlock.sql
 create table shedlock (
     name       varchar(64)  not null primary key,
     lock_until timestamp    not null,
@@ -223,8 +223,8 @@ create table shedlock (
 );
 ```
 
-```java
-package com.example.shop.config;
+```java src/main/java/com/acme/shop/common/config/SchedulingConfig.java
+package com.acme.shop.common.config;
 
 import net.javacrumbs.shedlock.core.LockProvider;
 import net.javacrumbs.shedlock.provider.jdbctemplate.JdbcTemplateLockProvider;
@@ -250,7 +250,7 @@ public class SchedulingConfig {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/reports/DailyReportJob.java
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 
 @Scheduled(cron = "0 0 2 * * *", zone = "Europe/Sofia")
@@ -271,7 +271,7 @@ ShedLock не прави retry и не следи дали job-ът е успя�
 
 Quartz е нужен, когато графиците са динамични (потребителят от UI казва "всеки вторник в 9"), трябва да оцелеят рестарт (persistent job store) и трябва cluster с failover. За статичен cron в кода ShedLock е по-прост.
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   quartz:
     job-store-type: jdbc
@@ -287,8 +287,8 @@ spring:
 
 Схемата на таблиците (`qrtz_*`) е в jar-а на Quartz под `org/quartz/impl/jdbcjobstore/tables_postgres.sql`. Копирай я в Flyway миграция.
 
-```java
-package com.example.shop.reports;
+```java src/main/java/com/acme/shop/reports/CustomerReportJob.java
+package com.acme.shop.reports;
 
 import org.quartz.JobExecutionContext;
 import org.springframework.scheduling.quartz.QuartzJobBean;
@@ -312,7 +312,7 @@ public class CustomerReportJob extends QuartzJobBean {
 
 Динамично планиране от service с инжектиран `Scheduler`:
 
-```java
+```java src/main/java/com/acme/shop/reports/ReportScheduleService.java
 import org.quartz.*;
 
 public void schedule(UUID customerId, String quartzCron) throws SchedulerException {
@@ -350,8 +350,8 @@ Quartz cron е с 6 или 7 полета и изисква `?` в едно от
 
 Default `applicationTaskExecutor` се конфигурира от `spring.task.execution.*`. За различни по характер задачи направи отделни executor-и, за да не блокира pool-ът за имейли pool-а за PDF:
 
-```java
-package com.example.shop.config;
+```java src/main/java/com/acme/shop/common/config/ExecutorConfig.java
+package com.acme.shop.common.config;
 
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
@@ -394,8 +394,8 @@ Rejection policy при пълна опашка и `maxPoolSize` нишки:
 
 Новата нишка не знае нищо за заявката: MDC с `traceId` е празен, `SecurityContextHolder` е празен. `TaskDecorator` копира контекста при подаване и го възстановява при изпълнение:
 
-```java
-package com.example.shop.config;
+```java src/main/java/com/acme/shop/common/logging/ContextPropagatingTaskDecorator.java
+package com.acme.shop.common.logging;
 
 import org.slf4j.MDC;
 import org.springframework.core.task.TaskDecorator;
@@ -429,7 +429,7 @@ public class ContextPropagatingTaskDecorator implements TaskDecorator {
 
 ### Използване
 
-```java
+```java src/main/java/com/acme/shop/invoice/InvoiceService.java
 @Async("reportExecutor")
 public CompletableFuture<Path> renderPdf(UUID invoiceId) {
     return CompletableFuture.completedFuture(pdfRenderer.render(invoices.findById(invoiceId).orElseThrow()));
@@ -449,14 +449,18 @@ Self-invocation: `this.sendReminder(id)` от друг метод в същия 
 
 За временни грешки: външно API върна 503, Postgres хвърли deadlock, DNS мигна. Retry с backoff решава повечето такива, без да ги показва на потребителя.
 
-```java
+```java src/main/java/com/acme/shop/common/config/RetryConfig.java
+package com.acme.shop.common.config;
+
 @Configuration
 @EnableRetry
 public class RetryConfig {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/payment/PaymentGatewayClient.java
+package com.acme.shop.payment;
+
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Recover;
 import org.springframework.retry.annotation.Retryable;
@@ -497,7 +501,7 @@ public class PaymentGatewayClient {
 
 `RetryTemplate` за програмно ползване, когато не искаш AOP:
 
-```java
+```java src/main/java/com/acme/shop/common/config/RetryConfig.java
 @Bean
 RetryTemplate dbRetry() {
     return RetryTemplate.builder()
@@ -529,7 +533,7 @@ flowchart TB
 
 ### Таблица
 
-```sql
+```sql src/main/resources/db/migration/V20250107_1110__create_jobs.sql
 create table jobs (
     id          uuid primary key,
     type        text        not null,
@@ -552,8 +556,8 @@ create index jobs_running_idx on jobs (locked_at) where status = 'running';
 
 ### Handler и registry
 
-```java
-package com.example.shop.jobs;
+```java src/main/java/com/acme/shop/common/jobs/
+package com.acme.shop.common.jobs;
 
 public interface JobHandler<P> {
     String type();
@@ -582,8 +586,8 @@ public class SendInvoiceEmailHandler implements JobHandler<SendInvoiceEmailHandl
 }
 ```
 
-```java
-package com.example.shop.jobs;
+```java src/main/java/com/acme/shop/common/jobs/JobHandlerRegistry.java
+package com.acme.shop.common.jobs;
 
 @Component
 public class JobHandlerRegistry {
@@ -603,8 +607,8 @@ public class JobHandlerRegistry {
 
 ### Enqueue
 
-```java
-package com.example.shop.jobs;
+```java src/main/java/com/acme/shop/common/jobs/JobQueue.java
+package com.acme.shop.common.jobs;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 
@@ -640,7 +644,9 @@ public class JobQueue {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/invoice/InvoiceService.java
+package com.acme.shop.invoice;
+
 @Service
 public class InvoiceService {
 
@@ -657,8 +663,8 @@ public class InvoiceService {
 
 ### Worker
 
-```java
-package com.example.shop.jobs;
+```java src/main/java/com/acme/shop/common/jobs/JobWorker.java
+package com.acme.shop.common.jobs;
 
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -773,7 +779,7 @@ public class JobWorker {
 
 JobRunr прави същото като секция 8, готово, с dashboard, retry, recurring jobs и поддръжка на няколко инстанции. Ако не искаш да поддържаш собствен worker, това е изборът.
 
-```yaml
+```yaml src/main/resources/application.yml
 org:
   jobrunr:
     background-job-server:
@@ -785,7 +791,7 @@ org:
       skip-create: false  # за dev, в prod таблиците са в миграция
 ```
 
-```java
+```java src/main/java/com/acme/shop/common/mail/MailJobs.java
 import org.jobrunr.jobs.annotations.Job;
 import org.jobrunr.jobs.annotations.Recurring;
 import org.jobrunr.scheduling.JobScheduler;
@@ -826,7 +832,9 @@ Job worker-ът от секция 8 е безопасен при shutdown: `drai
 
 Най-добрият тест на scheduled метод е да го извикаш директно. Не тествай cron израза, тествай логиката:
 
-```java
+```java src/test/java/com/acme/shop/maintenance/TokenCleanupJobTest.java
+package com.acme.shop.maintenance;
+
 @SpringBootTest(properties = "app.scheduling.enabled=false")
 class TokenCleanupJobTest {
 
@@ -847,7 +855,9 @@ class TokenCleanupJobTest {
 
 За да не стартират scheduler-ите в тестовете (и да не се бият за ShedLock, да не бутат outbox в Kafka), сложи условие на конфигурацията:
 
-```java
+```java src/main/java/com/acme/shop/common/config/SchedulingConfig.java
+package com.acme.shop.common.config;
+
 @Configuration
 @EnableScheduling
 @ConditionalOnProperty(name = "app.scheduling.enabled", havingValue = "true", matchIfMissing = true)

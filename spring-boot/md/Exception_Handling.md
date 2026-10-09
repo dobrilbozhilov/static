@@ -16,7 +16,7 @@
 
 `ProblemDetail` е в `spring-web`, идва със `spring-boot-starter-web`. Няма допълнителна зависимост.
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   mvc:
     problemdetails:
@@ -99,8 +99,8 @@ problem.setProperty("code", "ORDER_NOT_FOUND");
 
 Една domain exception, един advice, един controller.
 
-```java
-package com.example.orders.domain;
+```java src/main/java/com/acme/shop/order/OrderNotFoundException.java
+package com.acme.shop.order;
 
 public class OrderNotFoundException extends RuntimeException {
 
@@ -117,10 +117,10 @@ public class OrderNotFoundException extends RuntimeException {
 }
 ```
 
-```java
-package com.example.orders.web.error;
+```java src/main/java/com/acme/shop/common/error/GlobalExceptionHandler.java
+package com.acme.shop.common.error;
 
-import com.example.orders.domain.OrderNotFoundException;
+import com.acme.shop.order.OrderNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -139,7 +139,7 @@ public class GlobalExceptionHandler {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @GetMapping("/api/orders/{id}")
 public OrderResponse get(@PathVariable UUID id) {
     return orderRepository.findByPublicId(id)
@@ -169,8 +169,8 @@ flowchart LR
 
 Целта е service слоят да хвърля смислени exceptions без да знае за HTTP, а advice-ът да има един handler на семейство вместо един на клас.
 
-```java
-package com.example.orders.domain.error;
+```java src/main/java/com/acme/shop/common/error/ErrorCode.java
+package com.acme.shop.common.error;
 
 public enum ErrorCode {
     ORDER_NOT_FOUND, PRODUCT_NOT_FOUND, CUSTOMER_NOT_FOUND,
@@ -180,8 +180,8 @@ public enum ErrorCode {
 }
 ```
 
-```java
-package com.example.orders.domain.error;
+```java src/main/java/com/acme/shop/common/error/
+package com.acme.shop.common.error;
 
 public abstract class DomainException extends RuntimeException {
 
@@ -228,7 +228,7 @@ public class DependencyUnavailableException extends DomainException {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/OrderService.java
 @Service
 public class OrderService {
 
@@ -249,10 +249,9 @@ public class OrderService {
 
 Advice с един handler на семейство:
 
-```java
-package com.example.orders.web.error;
+```java src/main/java/com/acme/shop/common/error/GlobalExceptionHandler.java
+package com.acme.shop.common.error;
 
-import com.example.orders.domain.error.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -292,10 +291,9 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
 Фабриката държи общата логика (`type`, `code`, `traceId`, i18n), за да не я повтаряш във всеки handler:
 
-```java
-package com.example.orders.web.error;
+```java src/main/java/com/acme/shop/common/error/ProblemFactory.java
+package com.acme.shop.common.error;
 
-import com.example.orders.domain.error.DomainException;
 import org.slf4j.MDC;
 import org.springframework.context.MessageSource;
 import org.springframework.context.i18n.LocaleContextHolder;
@@ -388,7 +386,7 @@ public class ProblemFactory {
 
 `ResponseEntityExceptionHandler` вече връща ProblemDetail за около 20 вградени exception-а (405, 406, 415, 400 за липсващ параметър, 404 за непознат път, 503 за async timeout). Трябва да override-неш само тези, за които искаш `code` или по-добър `detail`:
 
-```java
+```java src/main/java/com/acme/shop/common/error/GlobalExceptionHandler.java
 @RestControllerAdvice
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
@@ -473,8 +471,8 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
 `AuthenticationException` и `AccessDeniedException` се хвърлят във filter chain-а на Spring Security, преди `DispatcherServlet`, и advice-ът не ги вижда. Форматът им се задава през `AuthenticationEntryPoint` (401) и `AccessDeniedHandler` (403).
 
-```java
-package com.example.orders.security;
+```java src/main/java/com/acme/shop/common/security/ProblemDetailSecurityHandlers.java
+package com.acme.shop.common.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
@@ -526,7 +524,7 @@ public class ProblemDetailSecurityHandlers implements AuthenticationEntryPoint, 
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 @Bean
 SecurityFilterChain api(HttpSecurity http, ProblemDetailSecurityHandlers handlers) throws Exception {
     http
@@ -547,7 +545,7 @@ SecurityFilterChain api(HttpSecurity http, ProblemDetailSecurityHandlers handler
 
 Важно изключение: `AccessDeniedException` от `@PreAuthorize` на controller метод се хвърля вътре в `DispatcherServlet`. Ако advice-ът има общ `@ExceptionHandler(Exception.class)`, той ще я хване и ще върне 500. Затова advice-ът трябва да я обработи изрично и консистентно със security handler-а:
 
-```java
+```java src/main/java/com/acme/shop/common/error/GlobalExceptionHandler.java
 @ExceptionHandler(AccessDeniedException.class)
 public ProblemDetail handleAccessDenied(AccessDeniedException ex) {
     return problems.create(HttpStatus.FORBIDDEN, "FORBIDDEN", "Forbidden", "You do not have access to this resource");
@@ -578,7 +576,7 @@ throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Report not generated ye
 
 ## 12. 500: нищо не изтича, всичко се логва
 
-```java
+```java src/main/java/com/acme/shop/common/error/GlobalExceptionHandler.java
 @ExceptionHandler(Exception.class)
 public ProblemDetail handleUnexpected(Exception ex, HttpServletRequest request) {
     log.error("Unhandled exception on {} {}", request.getMethod(), request.getRequestURI(), ex);
@@ -596,7 +594,7 @@ public ProblemDetail handleUnexpected(Exception ex, HttpServletRequest request) 
 
 Централизиран лог на всички грешки в един метод:
 
-```java
+```java src/main/java/com/acme/shop/common/error/GlobalExceptionHandler.java
 private ProblemDetail logged(HttpStatus status, DomainException ex) {
     if (status.is5xxServerError()) {
         log.error("code={} message={}", ex.code(), ex.getMessage(), ex);
@@ -611,7 +609,7 @@ private ProblemDetail logged(HttpStatus status, DomainException ex) {
 
 `ProblemFactory` от секция 6 вече търси ключове `problem.<CODE>.title` и `problem.<CODE>.detail` в `MessageSource` с локала от `Accept-Language`:
 
-```properties
+```properties src/main/resources/messages.properties
 # messages.properties
 problem.ORDER_NOT_FOUND.title=Поръчката не е намерена
 problem.ORDER_NOT_FOUND.detail=Поръчка {1} не съществува
@@ -620,7 +618,7 @@ problem.ORDER_NOT_CANCELLABLE.detail=Поръчки със статус {0} не
 problem.INSUFFICIENT_STOCK.title=Недостатъчна наличност
 ```
 
-```properties
+```properties src/main/resources/messages_en.properties
 # messages_en.properties
 problem.ORDER_NOT_FOUND.title=Order not found
 problem.ORDER_NOT_FOUND.detail=Order {1} does not exist
@@ -630,7 +628,7 @@ problem.ORDER_NOT_CANCELLABLE.detail=Orders in status {0} cannot be cancelled
 
 Spring има и вградена схема за `ResponseEntityExceptionHandler`: за всяка вградена грешка търси `problemDetail.<fully.qualified.ExceptionName>` за `detail` и `problemDetail.title.<...>` за `title`. Може да ги презапишеш в `messages.properties`:
 
-```properties
+```properties src/main/resources/messages.properties
 problemDetail.org.springframework.web.servlet.resource.NoResourceFoundException=Няма такъв endpoint: {0} {1}
 problemDetail.title.org.springframework.web.servlet.resource.NoResourceFoundException=Не е намерено
 ```
@@ -641,7 +639,7 @@ problemDetail.title.org.springframework.web.servlet.resource.NoResourceFoundExce
 
 `@ExceptionHandler` метод в controller клас важи само за този controller и има приоритет пред advice-а. Полезно за exception, което има смисъл само там:
 
-```java
+```java src/main/java/com/acme/shop/report/ReportController.java
 @RestController
 @RequestMapping("/api/reports")
 public class ReportController {
@@ -674,7 +672,9 @@ public class ReportController {
 | `@Scheduled` | `ErrorHandler` на scheduler-а, default логва | custom `ErrorHandler` с alert |
 | Kafka / Rabbit listener | error handler на container-а | retry, DLQ, виж [Message brokers](Message_Brokers.md) |
 
-```java
+```java src/main/java/com/acme/shop/common/config/AsyncConfig.java
+package com.acme.shop.common.config;
+
 @Configuration
 @EnableAsync
 public class AsyncConfig implements AsyncConfigurer {
@@ -695,7 +695,7 @@ public class AsyncConfig implements AsyncConfigurer {
 
 Всеки endpoint в OpenAPI трябва да декларира `application/problem+json` за своите грешки, иначе генерираните клиенти не знаят как да ги парсват. С springdoc това се прави веднъж глобално:
 
-```java
+```java src/main/java/com/acme/shop/common/config/OpenApiConfig.java
 @Bean
 public OperationCustomizer problemResponses() {
     return (operation, handlerMethod) -> {
@@ -715,7 +715,9 @@ public OperationCustomizer problemResponses() {
 
 `@WebMvcTest` зарежда `@RestControllerAdvice` bean-овете автоматично. Тестът хвърля от mock-натия service и проверява формата:
 
-```java
+```java src/test/java/com/acme/shop/order/OrderControllerErrorTest.java
+package com.acme.shop.order;
+
 @WebMvcTest(OrderController.class)
 @Import(ProblemFactory.class)
 class OrderControllerErrorTest {

@@ -16,7 +16,7 @@
 
 Нищо допълнително за самата конфигурация: `spring-boot-starter` я включва. За валидация на properties и за IDE метаданни добавяш:
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-validation</artifactId>
@@ -30,7 +30,7 @@
 
 Минимален `application.yml` на нов сървис:
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   application:
     name: shop
@@ -44,7 +44,7 @@ server:
 
 ## 2. Минимален работещ пример
 
-```yaml
+```yaml src/main/resources/application.yml
 # application.yml
 app:
   mail:
@@ -55,7 +55,7 @@ app:
     timeout: 5s
 ```
 
-```java
+```java src/main/java/com/acme/shop/common/config/AppProperties.java
 package com.acme.shop.common.config;
 
 import java.time.Duration;
@@ -70,7 +70,7 @@ public record AppProperties(Mail mail, Payments payments) {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/ShopApplication.java
 package com.acme.shop;
 
 import org.springframework.boot.SpringApplication;
@@ -86,7 +86,9 @@ public class ShopApplication {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/common/mail/MailService.java
+package com.acme.shop.common.mail;
+
 @Service
 public class MailService {
 
@@ -183,7 +185,7 @@ SPRING_PROFILES_ACTIVE=prod,eu java -jar shop.jar
 
 ### Profile-specific файлове
 
-```yaml
+```yaml src/main/resources/application-local.yml
 # application-local.yml
 spring:
   datasource:
@@ -197,7 +199,7 @@ logging:
     com.acme.shop: DEBUG
 ```
 
-```yaml
+```yaml src/main/resources/application-prod.yml
 # application-prod.yml
 spring:
   datasource:
@@ -217,7 +219,7 @@ logging:
 
 Алтернатива на отделни файлове, удобна за малки разлики:
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   application:
     name: shop
@@ -243,7 +245,7 @@ server:
 
 Когато "prod" означава пет неща едновременно:
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   profiles:
     group:
@@ -255,7 +257,9 @@ spring:
 
 ### Bean-ове по профил
 
-```java
+```java src/main/java/com/acme/shop/payment/PaymentConfig.java
+package com.acme.shop.payment;
+
 @Configuration
 public class PaymentConfig {
 
@@ -292,7 +296,7 @@ public class PaymentConfig {
 
 ### Пълен record с вложени групи и defaults
 
-```java
+```java src/main/java/com/acme/shop/common/config/AppProperties.java
 package com.acme.shop.common.config;
 
 import java.time.Duration;
@@ -337,7 +341,7 @@ public record AppProperties(
 }
 ```
 
-```yaml
+```yaml src/main/resources/application.yml
 app:
   mail:
     from: noreply@acme.com
@@ -365,7 +369,7 @@ app:
 
 Два начина, избери един за проекта:
 
-```java
+```java src/main/java/com/acme/shop/
 // 1. Сканиране на целия пакет (най-просто)
 @SpringBootApplication
 @ConfigurationPropertiesScan
@@ -383,7 +387,7 @@ public class PropertiesConfig {}
 
 `spring-boot-configuration-processor` генерира `META-INF/spring-configuration-metadata.json` при компилация. IntelliJ и VS Code четат този файл и дават autocomplete, документация и предупреждения за непознати ключове в `application.yml`. Javadoc върху record компонентите става описание в IDE:
 
-```java
+```java src/main/java/com/acme/shop/common/config/AppProperties.java
 public record Mail(
         /** Адрес, от който се изпращат всички системни имейли. */
         @NotBlank @Email String from,
@@ -396,20 +400,20 @@ public record Mail(
 
 ### Правила
 
-1. Никога в git. Нито в `application-prod.yml`, нито в `docker-compose.yml`, нито в тестове.
+1. Никога в git. Нито в `application-prod.yml`, нито в `compose.yaml`, нито в тестове.
 2. В `application-*.yml` стоят само placeholders: `password: ${DB_PASSWORD}`.
 3. Стойностите идват от средата: env променливи, secrets manager, mounted файлове.
 4. Локално има `.env` файл, който е в `.gitignore`, и `.env.example` с ключовете без стойности, който е в git.
 
 ### Локално с .env
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   config:
     import: optional:file:.env[.properties]
 ```
 
-```properties
+```properties .env
 # .env (в .gitignore)
 DB_PASSWORD=shop
 PAYMENTS_API_KEY=sk_test_abc
@@ -427,7 +431,7 @@ Kubernetes и Docker Swarm монтират тайните като файлов
 └── payments-api-key
 ```
 
-```yaml
+```yaml src/main/resources/application-prod.yml
 spring:
   config:
     import: optional:configtree:/run/secrets/
@@ -439,7 +443,7 @@ spring:
 
 `spring.config.import` е точка за разширение. С Spring Cloud Vault или Spring Cloud AWS добавяш:
 
-```yaml
+```yaml src/main/resources/application-prod.yml
 spring:
   config:
     import:
@@ -451,8 +455,8 @@ spring:
 
 ### Env променливи в Docker и Kubernetes
 
-```yaml
-# docker-compose.yml
+```yaml compose.yaml
+# compose.yaml
 services:
   shop:
     image: acme/shop:1.4.0
@@ -467,14 +471,16 @@ services:
 
 ## 7. Feature flags с ConditionalOnProperty
 
-```yaml
+```yaml src/main/resources/application.yml
 app:
   features:
     recommendations: true
     new-checkout: false
 ```
 
-```java
+```java src/main/java/com/acme/shop/recommendation/RecommendationService.java
+package com.acme.shop.recommendation;
+
 @Service
 @ConditionalOnProperty(name = "app.features.recommendations", havingValue = "true")
 public class RecommendationService {
@@ -482,7 +488,9 @@ public class RecommendationService {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
+package com.acme.shop.order;
+
 @RestController
 @RequestMapping("/api/orders")
 public class OrderController {
@@ -519,7 +527,7 @@ src/main/resources/
 └── application-prod.yml       # prod, само placeholders и размери на pool-ове
 ```
 
-```yaml
+```yaml src/main/resources/application.yml
 # application.yml
 spring:
   application:
@@ -545,7 +553,7 @@ management:
         include: health,info
 ```
 
-```yaml
+```yaml src/main/resources/application-local.yml
 # application-local.yml
 spring:
   datasource:
@@ -569,7 +577,7 @@ management:
         include: "*"
 ```
 
-```yaml
+```yaml src/main/resources/application-dev.yml
 # application-dev.yml
 app:
   payments:
@@ -579,7 +587,7 @@ logging:
     com.acme.shop: DEBUG
 ```
 
-```yaml
+```yaml src/main/resources/application-staging.yml
 # application-staging.yml
 spring:
   datasource:
@@ -589,7 +597,7 @@ server:
   shutdown: graceful
 ```
 
-```yaml
+```yaml src/main/resources/application-prod.yml
 # application-prod.yml
 spring:
   datasource:
@@ -612,7 +620,9 @@ logging:
 
 ### Environment и Value с default
 
-```java
+```java src/main/java/com/acme/shop/common/config/RegionResolver.java
+package com.acme.shop.common.config;
+
 @Component
 public class RegionResolver {
 
@@ -639,7 +649,7 @@ public class RegionResolver {
 
 ### Placeholders и random
 
-```yaml
+```yaml src/main/resources/application.yml
 app:
   instance-id: ${HOSTNAME:local}-${random.uuid}
   internal-port: ${random.int[9000,9999]}
@@ -659,7 +669,7 @@ info:
 
 ### Actuator env и configprops
 
-```yaml
+```yaml src/main/resources/application.yml
 management:
   endpoints:
     web:
@@ -683,7 +693,7 @@ GET /actuator/configprops/app
 
 Ключове, чието име съдържа `password`, `secret`, `key`, `token`, `credentials`, се маскират като `******` дори при `always`. За допълнителни правила дефинираш `SanitizingFunction` bean:
 
-```java
+```java src/main/java/com/acme/shop/common/observability/ActuatorConfig.java
 @Bean
 SanitizingFunction apiKeySanitizer() {
     return data -> data.getKey().endsWith("api-key") ? data.withValue("******") : data;
@@ -694,7 +704,7 @@ SanitizingFunction apiKeySanitizer() {
 
 Не логвай `AppProperties` с `toString()`, защото record-ът ще изпише `apiKey`. Ако искаш отчет при старт, напиши го явно:
 
-```java
+```java src/main/java/com/acme/shop/common/config/StartupConfigLogger.java
 @EventListener(ApplicationReadyEvent.class)
 void logConfig() {
     log.info("profiles={}, paymentsUrl={}, mailFrom={}",
@@ -710,13 +720,13 @@ void logConfig() {
 
 ### Статични стойности
 
-```java
+```java src/test/java/com/acme/shop/common/mail/MailServiceTest.java
 @SpringBootTest(properties = "app.mail.from=test@acme.com")
 @ActiveProfiles("test")
 class MailServiceTest { ... }
 ```
 
-```java
+```java src/test/java/com/acme/shop/order/OrderControllerTest.java
 @SpringBootTest
 @TestPropertySource(properties = {
         "app.features.recommendations=false",
@@ -731,7 +741,9 @@ class OrderControllerTest { ... }
 
 Когато портът се знае едва след стартиране на контейнера:
 
-```java
+```java src/test/java/com/acme/shop/order/OrderRepositoryIT.java
+package com.acme.shop.order;
+
 @SpringBootTest
 @Testcontainers
 class OrderRepositoryIT {
@@ -750,7 +762,7 @@ class OrderRepositoryIT {
 
 За стандартните контейнери (Postgres, Redis, Kafka) `@ServiceConnection` замества целия `@DynamicPropertySource`:
 
-```java
+```java src/test/java/com/acme/shop/order/OrderRepositoryIT.java
 @Container
 @ServiceConnection
 static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
@@ -760,7 +772,9 @@ static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16"
 
 ### Тест на самите properties
 
-```java
+```java src/test/java/com/acme/shop/common/config/AppPropertiesTest.java
+package com.acme.shop.common.config;
+
 class AppPropertiesTest {
 
     @Test

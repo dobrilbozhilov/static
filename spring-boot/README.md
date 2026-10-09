@@ -14,4 +14,12 @@ npm run build        # създава dist/index.html и dist/pages/*.html
 "Капани", "Чеклист" и "Свързани документи". Линк към друг документ се пише с името на файла му,
 например `[Валидации](Validation.md)`.
 
+Пътят на файла, който един code block представя, се пише в info реда на fence-а и билдът го показва
+като етикет над кода:
+
+    ```java src/main/java/com/acme/shop/order/dto/CreateOrderRequest.java
+
+Коренният пакет във всички документи е `com.acme.shop`, пакетите са по feature. Блокове, които не са
+файл (команди, HTTP заявки, изход от конзола), остават без път.
+
 Таргет: Java 21, Spring Boot 3.5, PostgreSQL.

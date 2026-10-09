@@ -16,7 +16,7 @@ DTO (data transfer object) е формата, в която API-то ти гов
 
 Jackson идва със `spring-boot-starter-web`. MapStruct и Lombok са по избор и изискват annotation processor конфигурация в Maven, при това в правилния ред, когато са заедно.
 
-```xml
+```xml pom.xml
 <properties>
     <mapstruct.version>1.6.3</mapstruct.version> <!-- виж последната версия в Maven Central -->
     <lombok-mapstruct-binding.version>0.2.0</lombok-mapstruct-binding.version>
@@ -70,7 +70,7 @@ Jackson идва със `spring-boot-starter-web`. MapStruct и Lombok са по
 
 `lombok-mapstruct-binding` кара MapStruct да вижда getter-ите и builder-ите, които Lombok генерира. Без него MapStruct се компилира преди Lombok да е свършил и получаваш "no property found". `${lombok.version}` се управлява от `spring-boot-starter-parent`. `unmappedTargetPolicy=ERROR` е умишлено: по-добре build-ът да падне, отколкото ново поле в entity-то тихо да остане `null` в response-а.
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   jackson:
     default-property-inclusion: non_null
@@ -108,8 +108,8 @@ Records са естественият DTO в Java 21: immutable, с `equals`/`ha
 | `...Summary` | изход, лек списъчен изглед | `OrderSummary` |
 | `...Command` / `...Query` | вътрешно, controller към service | `CreateOrderCommand` |
 
-```java
-package com.example.orders.web.dto;
+```java src/main/java/com/acme/shop/order/dto/CreateOrderRequest.java
+package com.acme.shop.order.dto;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -132,11 +132,11 @@ public record CreateOrderRequest(
 }
 ```
 
-```java
-package com.example.orders.web.dto;
+```java src/main/java/com/acme/shop/order/dto/OrderResponse.java
+package com.acme.shop.order.dto;
 
-import com.example.orders.domain.Order;
-import com.example.orders.domain.OrderItem;
+import com.acme.shop.order.Order;
+import com.acme.shop.order.OrderItem;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -174,8 +174,8 @@ public record OrderResponse(
 }
 ```
 
-```java
-package com.example.orders.web;
+```java src/main/java/com/acme/shop/order/OrderController.java
+package com.acme.shop.order;
 
 @RestController
 @RequestMapping("/api/orders")
@@ -269,12 +269,10 @@ Request DTO-то не трябва да стига до service слоя: servic
 
 ### MapStruct: основен mapper
 
-```java
-package com.example.orders.web.mapper;
+```java src/main/java/com/acme/shop/order/OrderMapper.java
+package com.acme.shop.order;
 
-import com.example.orders.domain.Order;
-import com.example.orders.domain.OrderItem;
-import com.example.orders.web.dto.OrderResponse;
+import com.acme.shop.order.dto.OrderResponse;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 
@@ -297,11 +295,10 @@ MapStruct разбира records като target: намира каноничн�
 
 ### Update с @MappingTarget
 
-```java
-package com.example.orders.web.mapper;
+```java src/main/java/com/acme/shop/order/AddressMapper.java
+package com.acme.shop.order;
 
-import com.example.orders.domain.Address;
-import com.example.orders.web.dto.UpdateAddressRequest;
+import com.acme.shop.order.dto.UpdateAddressRequest;
 import org.mapstruct.BeanMapping;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
@@ -322,7 +319,9 @@ public interface AddressMapper {
 
 ### Enum mapping и nested mapper
 
-```java
+```java src/main/java/com/acme/shop/order/MoneyMapper.java
+package com.acme.shop.order;
+
 @Mapper(componentModel = "spring")
 public interface MoneyMapper {
 
@@ -332,7 +331,9 @@ public interface MoneyMapper {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/StatusMapper.java
+package com.acme.shop.order;
+
 @Mapper(componentModel = "spring")
 public interface StatusMapper {
 
@@ -364,7 +365,9 @@ Boot създава `ObjectMapper` bean с разумни default-и: `WRITE_DAT
 
 ### Анотации, които наистина ти трябват
 
-```java
+```java src/main/java/com/acme/shop/product/dto/ProductResponse.java
+package com.acme.shop.product.dto;
+
 public record ProductResponse(
         UUID id,
         String name,
@@ -385,7 +388,9 @@ public record ProductResponse(
 
 Jackson чете records през каноничния конструктор без анотации. `@JsonCreator` ти трябва, когато има повече от един конструктор или искаш нормализация на входа:
 
-```java
+```java src/main/java/com/acme/shop/user/dto/RegisterUserRequest.java
+package com.acme.shop.user.dto;
+
 public record RegisterUserRequest(String email, String displayName) {
 
     @JsonCreator
@@ -399,7 +404,9 @@ public record RegisterUserRequest(String email, String displayName) {
 
 При records по-простият вариант е компактен конструктор без `@JsonCreator`, той се изпълнява при всяко създаване, включително от Jackson:
 
-```java
+```java src/main/java/com/acme/shop/user/dto/RegisterUserRequest.java
+package com.acme.shop.user.dto;
+
 public record RegisterUserRequest(String email, String displayName) {
     public RegisterUserRequest {
         email = email == null ? null : email.trim().toLowerCase();
@@ -414,10 +421,10 @@ public record RegisterUserRequest(String email, String displayName) {
 
 Пример за value object `Money`, който в JSON искаш като `{ "amount": "99.80", "currency": "EUR" }`:
 
-```java
-package com.example.orders.web.json;
+```java src/main/java/com/acme/shop/common/config/MoneyJson.java
+package com.acme.shop.common.config;
 
-import com.example.orders.domain.Money;
+import com.acme.shop.order.Money;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationContext;
@@ -461,7 +468,9 @@ public class MoneyJson {
 
 Когато ти трябва нещо, което няма property, не създавай нов `ObjectMapper` bean (губиш всички Boot default-и), а добави customizer:
 
-```java
+```java src/main/java/com/acme/shop/common/config/JacksonConfig.java
+package com.acme.shop.common.config;
+
 @Configuration
 public class JacksonConfig {
 
@@ -515,7 +524,9 @@ public record PriceResponse(long amountMinor, String currency) {}
 
 По подразбиране Jackson пише `name()` на enum-а. Това е добре, стига имената да са стабилна част от контракта. Два проблема за решаване:
 
-```java
+```java src/main/java/com/acme/shop/order/OrderStatus.java
+package com.acme.shop.order;
+
 public enum OrderStatus {
     NEW("new"), PAID("paid"), SHIPPED("shipped"), CANCELLED("cancelled"),
     @JsonEnumDefaultValue UNKNOWN("unknown");
@@ -560,7 +571,9 @@ public enum OrderStatus {
 
 Когато един и същ response има публична и admin версия, и разликата е 2 до 3 полета, `@JsonView` спестява второ DTO:
 
-```java
+```java src/main/java/com/acme/shop/user/dto/
+package com.acme.shop.user.dto;
+
 public class Views {
     public interface Public {}
     public interface Admin extends Public {}
@@ -574,7 +587,7 @@ public record UserResponse(
 ) {}
 ```
 
-```java
+```java src/main/java/com/acme/shop/user/UserController.java
 @GetMapping("/api/users/{id}")
 @JsonView(Views.Public.class)
 public UserResponse get(@PathVariable UUID id) { ... }
@@ -590,8 +603,8 @@ public UserResponse getAsAdmin(@PathVariable UUID id) { ... }
 
 Един endpoint за плащания, различни типове: карта, банков превод, портфейл. Sealed interface плюс records плюс `@JsonTypeInfo`:
 
-```java
-package com.example.orders.web.dto;
+```java src/main/java/com/acme/shop/payment/dto/PaymentMethodRequest.java
+package com.acme.shop.payment.dto;
 
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
@@ -617,7 +630,7 @@ public sealed interface PaymentMethodRequest {
 { "type": "card", "token": "tok_1abc", "expiry": "12/27" }
 ```
 
-```java
+```java src/main/java/com/acme/shop/payment/PaymentService.java
 public Payment create(PaymentMethodRequest method) {
     return switch (method) {
         case PaymentMethodRequest.Card c -> cardGateway.charge(c.token());
@@ -634,8 +647,8 @@ Sealed interface плюс pattern matching `switch` дава compile error, ко
 
 ### Interface projection
 
-```java
-package com.example.orders.repository;
+```java src/main/java/com/acme/shop/order/OrderSummaryView.java
+package com.acme.shop.order;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -655,7 +668,9 @@ public interface OrderSummaryView {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/OrderRepository.java
+package com.acme.shop.order;
+
 public interface OrderRepository extends JpaRepository<Order, Long> {
     List<OrderSummaryView> findByStatusOrderByCreatedAtDesc(OrderStatus status);
 }
@@ -665,17 +680,19 @@ Closed projections (само getter-и, без `@Value`) се превеждат
 
 ### Record projection с constructor expression
 
-```java
-package com.example.orders.web.dto;
+```java src/main/java/com/acme/shop/order/dto/OrderSummary.java
+package com.acme.shop.order.dto;
 
 public record OrderSummary(UUID id, String status, BigDecimal total, String customerName, Instant createdAt) {}
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/OrderRepository.java
+package com.acme.shop.order;
+
 public interface OrderRepository extends JpaRepository<Order, Long> {
 
     @Query("""
-            select new com.example.orders.web.dto.OrderSummary(
+            select new com.acme.shop.order.dto.OrderSummary(
                 o.publicId, cast(o.status as string), o.total.amount, c.displayName, o.createdAt)
             from Order o join o.customer c
             where o.status = :status
@@ -712,7 +729,7 @@ Validation анотациите живеят на request record-а, не на e
 
 Records правят Lombok ненужен за DTO-та: `@Value`, `@Data`, `@AllArgsConstructor` са това, което record-ът дава вграден. Остават два случая, в които Lombok си заслужава:
 
-```java
+```java src/main/java/com/acme/shop/order/Order.java
 @Entity
 @Table(name = "orders")
 @Getter
@@ -737,7 +754,9 @@ public class Order {
 
 Record-ът е immutable само на повърхността: `List<Item> items` може да се модифицира отвън, ако някой държи референцията. Защитно копие в компактния конструктор:
 
-```java
+```java src/main/java/com/acme/shop/order/dto/CreateOrderRequest.java
+package com.acme.shop.order.dto;
+
 public record CreateOrderRequest(UUID customerId, List<Item> items, String note) {
     public CreateOrderRequest {
         items = items == null ? List.of() : List.copyOf(items);

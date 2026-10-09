@@ -12,7 +12,7 @@ HTTP е заявка-отговор: сървърът не може да каж�
 
 ## 1. Зависимости и настройка
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-websocket</artifactId>
@@ -47,8 +47,8 @@ HTTP е заявка-отговор: сървърът не може да каж�
 
 SSE е най-простият път и често е достатъчен. Controller връща `SseEmitter`, държиш го в registry и го ползваш, когато има какво да пратиш.
 
-```java
-package com.example.shop.notification;
+```java src/main/java/com/acme/shop/notification/NotificationStreamController.java
+package com.acme.shop.notification;
 
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -75,8 +75,8 @@ public class NotificationStreamController {
 }
 ```
 
-```java
-package com.example.shop.notification;
+```java src/main/java/com/acme/shop/notification/SseRegistry.java
+package com.acme.shop.notification;
 
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -136,8 +136,8 @@ public class SseRegistry {
 
 ### Конфигурация
 
-```java
-package com.example.shop.ws;
+```java src/main/java/com/acme/shop/common/config/WebSocketConfig.java
+package com.acme.shop.common.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -179,8 +179,8 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
 ### Handler и registry на сесии
 
-```java
-package com.example.shop.ws;
+```java src/main/java/com/acme/shop/common/ws/OrderSocketHandler.java
+package com.acme.shop.common.ws;
 
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -251,7 +251,9 @@ public class OrderSocketHandler extends TextWebSocketHandler {
 
 Съобщенията като sealed interface с Jackson polymorphism (`ServerMessage` е по същия модел със `Status(orderId, status, eta)` и `Pong()`):
 
-```java
+```java src/main/java/com/acme/shop/common/ws/ClientMessage.java
+package com.acme.shop.common.ws;
+
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 
@@ -272,8 +274,8 @@ public sealed interface ClientMessage {
 
 Браузърният `WebSocket` API не позволява custom headers. Остават cookie (ако ползваш session auth, работи автоматично) или token в query параметър.
 
-```java
-package com.example.shop.ws;
+```java src/main/java/com/acme/shop/common/ws/JwtHandshakeInterceptor.java
+package com.acme.shop.common.ws;
 
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
@@ -319,7 +321,7 @@ Token в URL попада в access логове и в browser history. Изпо
 
 Tomcat не праща ping сам. Прокситата и NAT-овете затварят тиха TCP връзка след 30 до 120 секунди. Прати ping от сървъра на 30 секунди:
 
-```java
+```java src/main/java/com/acme/shop/common/ws/OrderSocketHandler.java
 @Scheduled(fixedRate = 30_000)
 public void ping() {
     byUser.values().stream().flatMap(Set::stream).forEach(s -> {
@@ -336,8 +338,8 @@ STOMP е текстов протокол с frame-ове `CONNECT`, `SUBSCRIBE`,
 
 ### Конфигурация
 
-```java
-package com.example.shop.ws;
+```java src/main/java/com/acme/shop/common/config/StompConfig.java
+package com.acme.shop.common.config;
 
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
@@ -392,8 +394,8 @@ flowchart LR
 
 ### Controller
 
-```java
-package com.example.shop.ws;
+```java src/main/java/com/acme/shop/order/OrderStompController.java
+package com.acme.shop.order;
 
 import org.springframework.messaging.handler.annotation.*;
 import org.springframework.messaging.simp.annotation.SendToUser;
@@ -436,8 +438,8 @@ public class OrderStompController {
 
 ### Изпращане от service
 
-```java
-package com.example.shop.order;
+```java src/main/java/com/acme/shop/order/OrderStatusPusher.java
+package com.acme.shop.order;
 
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 
@@ -498,8 +500,8 @@ public class OrderStatusPusher {
 
 За STOMP предпочитай CONNECT frame. `ChannelInterceptor` на inbound канала хваща CONNECT, валидира token-а и слага `Principal` в сесията:
 
-```java
-package com.example.shop.ws;
+```java src/main/java/com/acme/shop/common/config/StompAuthConfig.java
+package com.acme.shop.common.config;
 
 import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.stomp.StompCommand;
@@ -546,15 +548,15 @@ public class StompAuthConfig implements WebSocketMessageBrokerConfigurer {
 
 Spring Security 6 защитава destinations с `AuthorizationManager<Message<?>>`:
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.security</groupId>
     <artifactId>spring-security-messaging</artifactId>
 </dependency>
 ```
 
-```java
-package com.example.shop.config;
+```java src/main/java/com/acme/shop/common/config/WebSocketSecurityConfig.java
+package com.acme.shop.common.config;
 
 import org.springframework.messaging.Message;
 import org.springframework.security.authorization.AuthorizationManager;
@@ -585,7 +587,7 @@ public class WebSocketSecurityConfig {
 
 `@EnableWebSocketSecurity` включва CSRF проверка на CONNECT frame-а: клиентът трябва да прати CSRF token в header. Това има смисъл при cookie auth. При JWT в header CSRF атака е невъзможна (атакуващият сайт не знае token-а), затова го изключваш с no-op interceptor под точно това име:
 
-```java
+```java src/main/java/com/acme/shop/common/config/WebSocketSecurityConfig.java
 @Bean("csrfChannelInterceptor")
 ChannelInterceptor csrfChannelInterceptor() {
     return new ChannelInterceptor() { };
@@ -612,7 +614,7 @@ flowchart TB
 
 Spring препраща всички `/topic` и `/queue` destinations към външен STOMP broker. RabbitMQ с `rabbitmq_stomp` plugin е стандартният избор.
 
-```java
+```java src/main/java/com/acme/shop/common/config/StompConfig.java
 @Override
 public void configureMessageBroker(MessageBrokerRegistry registry) {
     registry.enableStompBrokerRelay("/topic", "/queue")
@@ -635,7 +637,9 @@ public void configureMessageBroker(MessageBrokerRegistry registry) {
 
 Ако не ползваш STOMP, най-лекият fan-out е Redis pub/sub: service-ът публикува в Redis канал, всяка инстанция слуша и праща към своите локални сесии.
 
-```java
+```java src/main/java/com/acme/shop/order/OrderStatusBroadcaster.java
+package com.acme.shop.order;
+
 @Component
 public class OrderStatusBroadcaster {
 
@@ -664,7 +668,7 @@ public class OrderStatusBroadcaster {
 - Raw WS: `ConcurrentWebSocketSessionDecorator` с `sendTimeLimit` и `bufferSizeLimit`. При надвишаване сесията се затваря с `SESSION_NOT_RELIABLE`.
 - STOMP: същата защита е вградена, настройва се през `WebSocketTransportRegistration`:
 
-```java
+```java src/main/java/com/acme/shop/common/config/StompConfig.java
 @Override
 public void configureWebSocketTransport(WebSocketTransportRegistration registration) {
     registration.setSendTimeLimit(5_000)
@@ -685,7 +689,7 @@ Heartbeat: STOMP heartbeat `[10000, 10000]` означава "сървърът �
 
 Nginx буферира отговорите по подразбиране и клиентът ще получава събитията на пакети, когато буферът се напълни. Изключи го за SSE пътя с `proxy_buffering off` и `proxy_read_timeout 1h` в `location`, или прати header от приложението, който nginx уважава без конфигурация:
 
-```java
+```java src/main/java/com/acme/shop/notification/NotificationStreamController.java
 @GetMapping(path = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
 public ResponseEntity<SseEmitter> stream(Principal principal) {
     return ResponseEntity.ok()
@@ -699,7 +703,7 @@ public ResponseEntity<SseEmitter> stream(Principal principal) {
 
 Също като при WebSocket, прокситата затварят тиха връзка. Пращай коментар на 20 секунди:
 
-```java
+```java src/main/java/com/acme/shop/notification/SseRegistry.java
 @Scheduled(fixedRate = 20_000)
 public void keepAlive() {
     all().forEach(emitter -> {
@@ -719,8 +723,8 @@ public void keepAlive() {
 
 Клиентът вижда статуса на своята поръчка на живо, а admin dashboard-ът вижда всички промени. Събитието идва от service-а след commit.
 
-```java
-package com.example.shop.order;
+```java src/main/java/com/acme/shop/order/
+package com.acme.shop.order;
 
 public record OrderStatusChangedEvent(UUID orderId, UUID customerId, String newStatus, Instant eta) {}
 
@@ -756,7 +760,9 @@ public class OrderService {
 
 Admin-ът само гледа, затова SSE. Защитено с роля, виж [Authorization](Authorization.md).
 
-```java
+```java src/main/java/com/acme/shop/order/AdminOrderStreamController.java
+package com.acme.shop.order;
+
 @RestController
 @RequestMapping("/api/admin/orders")
 public class AdminOrderStreamController {
@@ -789,7 +795,9 @@ Controller с `@TransactionalEventListener` е приемливо за малъ�
 
 ### STOMP с WebSocketStompClient
 
-```java
+```java src/test/java/com/acme/shop/order/OrderStompIT.java
+package com.acme.shop.order;
+
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
 import org.springframework.messaging.simp.stomp.*;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
@@ -835,7 +843,7 @@ class OrderStompIT {
 
 ### Raw WS със StandardWebSocketClient
 
-```java
+```java src/test/java/com/acme/shop/common/ws/OrderSocketHandlerIT.java
 @Test
 void trackReturnsStatus() throws Exception {
     var received = new ArrayBlockingQueue<String>(1);

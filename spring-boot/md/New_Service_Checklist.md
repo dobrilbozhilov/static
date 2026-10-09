@@ -56,7 +56,7 @@ flowchart LR
 
 ### Минимален pom.xml за API сървис
 
-```xml
+```xml pom.xml
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -70,8 +70,8 @@ flowchart LR
         <relativePath/>
     </parent>
 
-    <groupId>com.example</groupId>
-    <artifactId>orders</artifactId>
+    <groupId>com.acme</groupId>
+    <artifactId>shop</artifactId>
     <version>0.1.0-SNAPSHOT</version>
 
     <properties>
@@ -174,27 +174,38 @@ flowchart LR
 ### Препоръчана структура на пакетите
 
 ```text
-com.example.orders
-├── OrdersApplication.java
-├── config/                     SecurityConfig, JacksonConfig, OpenApiConfig, AppProperties
+src/main/java/com/acme/shop
+├── ShopApplication.java
 ├── common/
-│   ├── errors/                 ApiExceptionHandler, NotFoundException, ConflictException
+│   ├── config/                 SecurityConfig, JacksonConfig, OpenApiConfig, AppProperties
+│   ├── error/                  GlobalExceptionHandler, NotFoundException, ConflictException
 │   ├── web/                    RequestIdFilter, PageResponse
-│   └── persistence/            BaseEntity, AuditingConfig
-├── orders/
-│   ├── api/                    OrderController, CreateOrderRequest, OrderResponse
-│   ├── domain/                 Order, OrderLine, OrderStatus, OrderRepository
-│   ├── service/                OrderService, OrderMapper
-│   └── events/                 OrderPaidEvent, OrderEventListener
-├── customers/
-│   ├── api/
-│   ├── domain/
-│   └── service/
-└── billing/
-    ├── api/
-    ├── domain/
-    ├── service/
-    └── client/                 StripeClient с @HttpExchange
+│   └── security/               JwtService, CurrentUserProvider
+├── order/
+│   ├── Order.java              entity
+│   ├── OrderItem.java
+│   ├── OrderStatus.java
+│   ├── OrderRepository.java
+│   ├── OrderService.java
+│   ├── OrderController.java
+│   ├── OrderMapper.java
+│   ├── OrderPlacedEvent.java
+│   └── dto/                    CreateOrderRequest, OrderResponse
+├── customer/
+│   └── ...
+└── payment/
+    ├── PaymentService.java
+    └── PaymentGatewayClient.java   @HttpExchange клиент към Stripe
+
+src/main/resources
+├── application.yml
+├── application-dev.yml
+├── application-prod.yml
+└── db/migration/               V20250107_1030__create_orders.sql
+
+src/test/java/com/acme/shop
+├── AbstractIntegrationTest.java
+└── order/                      OrderControllerTest, OrderServiceTest, OrderMother
 ```
 
 Всеки feature пакет е самостоятелен и говори с другите само през service интерфейси или events, никога през repository на друг feature. Това е линията, по която по-късно се реже микросървис.
@@ -211,7 +222,7 @@ com.example.orders
 
 ### Минимален application.yml
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   application:
     name: orders
@@ -268,7 +279,7 @@ management:
 logging:
   level:
     root: info
-    com.example.orders: debug
+    com.acme.shop: debug
 
 ---
 spring:
@@ -277,7 +288,7 @@ spring:
       on-profile: dev
   docker:
     compose:
-      file: compose.yml
+      file: compose.yaml
       lifecycle-management: start-only
       skip:
         in-tests: true
@@ -294,14 +305,14 @@ logging:
     format:
       console: ecs
   level:
-    com.example.orders: info
+    com.acme.shop: info
 ```
 
 Защо тези ключове: `open-in-view=false` спира lazy loading в контролера и скрити N+1 заявки; `ddl-auto=validate` гарантира, че Flyway и entity-тата съвпадат и Hibernate никога не пипа схемата; `virtual.enabled=true` дава виртуални нишки за всяка заявка, което прави blocking JDBC и HTTP извиквания евтини; `problemdetails.enabled=true` дава RFC 9457 грешки от самия Spring, върху които стъпва твоят `@RestControllerAdvice`; `shutdown=graceful` довършва заявките при деплой; `structured.format.console=ecs` само в `prod`, защото JSON в терминала локално е нечетим.
 
 ## 4. База данни
 
-- [ ] Postgres върти локално от `compose.yml` и в тестовете от Testcontainers с `@ServiceConnection`, същата major версия като production, виж [Testing](Testing.md).
+- [ ] Postgres върти локално от `compose.yaml` и в тестовете от Testcontainers с `@ServiceConnection`, същата major версия като production, виж [Testing](Testing.md).
 - [ ] Първата Flyway миграция `V1__init.sql` е написана на ръка, преди първото entity, с имена на таблици в `snake_case` и множествено число, виж [Миграции](Migrations.md).
 - [ ] Всяко entity има `@Version` за optimistic locking и `createdAt`/`updatedAt` с JPA auditing през общ `BaseEntity`, виж [База данни и ORM](Database_ORM.md).
 - [ ] Релациите са `LAZY` по подразбиране, `@ManyToOne(fetch = LAZY)` е написано изрично, двупосочни връзки само когато са нужни, виж [Релации](Relations.md).
@@ -376,7 +387,7 @@ logging:
 
 ## 10. Docker и CI
 
-- [ ] `compose.yml` вдига Postgres, Redis и Mailpit с healthchecks, а `spring-boot-docker-compose` ги wire-ва при локален старт, виж [Docker и деплой](Docker_Deploy.md).
+- [ ] `compose.yaml` вдига Postgres, Redis и Mailpit с healthchecks, а `spring-boot-docker-compose` ги wire-ва при локален старт, виж [Docker и деплой](Docker_Deploy.md).
 - [ ] Има multi-stage `Dockerfile` с layered jar, non-root потребител, exec форма на `ENTRYPOINT` и `JAVA_TOOL_OPTIONS` с `MaxRAMPercentage`, или `spring-boot:build-image`, виж [Docker и деплой](Docker_Deploy.md).
 - [ ] `.dockerignore` изключва `.git`, `.env`, IDE файлове и `target/` без jar-а, виж [Docker и деплой](Docker_Deploy.md).
 - [ ] CI pipeline-ът пуска `mvn verify` с Testcontainers на всеки PR и строи image с git sha таг при merge в `main`, виж [Docker и деплой](Docker_Deploy.md).
@@ -466,7 +477,7 @@ logging:
 - [ ] `RequestIdFilter` с MDC, JSON логове в prod, без чувствителни данни в лога.
 - [ ] Actuator с liveness, readiness с `db`, Prometheus, `info` с версия и git sha.
 - [ ] `AbstractIntegrationTest`, `@WebMvcTest` за контролери, `mvn verify` зелен в CI под пет минути.
-- [ ] Multi-stage Dockerfile или Buildpacks, image с git sha таг, Trivy, `compose.yml` за dev.
+- [ ] Multi-stage Dockerfile или Buildpacks, image с git sha таг, Trivy, `compose.yaml` за dev.
 - [ ] Deployment с probes, `maxUnavailable: 0`, memory request равен на limit, миграции от Job, rollback пробван на staging.
 
 ## 16. Свързани документи

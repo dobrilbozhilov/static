@@ -14,7 +14,7 @@ Seeding е зареждането на начални данни в базата
 
 За справочните данни ти трябва само Flyway. За dev seeding добави Datafaker. Нищо от това не влиза в production артефакта по различен начин, затова guard-ът е през профили, не през dependency scope.
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.flywaydb</groupId>
     <artifactId>flyway-core</artifactId>
@@ -32,7 +32,7 @@ Seeding е зареждането на начални данни в базата
 
 Минималната конфигурация изключва вградения SQL init на Spring Boot (той се бие с Flyway) и включва batch inserts на Hibernate, защото без тях seeding на хиляди редове е десетки пъти по-бавен.
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   sql:
     init:
@@ -104,7 +104,7 @@ flowchart TB
 
 Справочните данни са част от миграциите, както схемата. Ключовото правило: стабилни ключове. Ако кодът реферира роля по име, името е primary key или има unique constraint, а ако по UUID, UUID-то е фиксирано в миграцията, не генерирано.
 
-```sql
+```sql src/main/resources/db/migration/V2__reference_roles_and_statuses.sql
 -- V2__reference_roles_and_statuses.sql
 CREATE TABLE roles (
     id   UUID PRIMARY KEY,
@@ -134,7 +134,7 @@ ON CONFLICT (code) DO NOTHING;
 
 Държавите са типичен repeatable случай: списъкът се променя рядко, но се променя, и не искаш нова versioned миграция за всяка корекция. Repeatable миграцията се изпълнява отново всеки път, когато checksum-ът на файла се промени, затова трябва да е идемпотентна и да обновява, не само да вмъква.
 
-```sql
+```sql src/main/resources/db/migration/R__countries.sql
 -- R__countries.sql
 CREATE TABLE IF NOT EXISTS countries (
     iso2       CHAR(2) PRIMARY KEY,
@@ -181,7 +181,9 @@ WHEN NOT MATCHED THEN INSERT (iso2, name, eu_member) VALUES (src.iso2, src.name,
 
 Ако seed-натите редове имат UUID primary key, не го генерирай с `gen_random_uuid()` или `UUID.randomUUID()`. При повторно изпълнение ще получиш различни id и `ON CONFLICT (id)` няма да хване дубликата. Или фиксираш UUID литерали в SQL (както в `roles` горе), или в Java ги извличаш детерминистично от естествения ключ:
 
-```java
+```java src/main/java/com/acme/shop/common/seed/SeedIds.java
+package com.acme.shop.common.seed;
+
 public final class SeedIds {
     private SeedIds() {}
 
@@ -199,7 +201,7 @@ public final class SeedIds {
 
 Най-простият guard за dev seeder: ако базата не е празна, не прави нищо. Това го прави безопасен за всяко рестартиране.
 
-```java
+```java src/main/java/com/acme/shop/common/seed/DevDataSeeder.java
 if (userRepository.count() > 0) {
     log.info("DB already seeded, skipping");
     return;
@@ -212,8 +214,8 @@ if (userRepository.count() > 0) {
 
 Понеже хеширането с bcrypt или argon2 не може да стане в чист SQL, admin потребителят се създава от `ApplicationRunner`, който работи във всички профили, но е идемпотентен и се пропуска, ако admin вече съществува. За `PasswordEncoder` и `UserAccount` виж [Authentication](Authentication.md).
 
-```java
-package com.example.shop.seed;
+```java src/main/java/com/acme/shop/common/seed/AdminSeedProperties.java
+package com.acme.shop.common.seed;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
@@ -221,7 +223,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record AdminSeedProperties(String email, String password) {}
 ```
 
-```yaml
+```yaml src/main/resources/application.yml
 app:
   seed:
     admin:
@@ -229,8 +231,8 @@ app:
       password: ${SEED_ADMIN_PASSWORD:}
 ```
 
-```java
-package com.example.shop.seed;
+```java src/main/java/com/acme/shop/common/seed/AdminUserSeeder.java
+package com.acme.shop.common.seed;
 
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -285,14 +287,14 @@ public class AdminUserSeeder implements ApplicationRunner {
 
 ### Flyway локация по профил
 
-```yaml
+```yaml src/main/resources/application-local.yml
 # application-local.yml
 spring:
   flyway:
     locations: classpath:db/migration,classpath:db/seed/dev
 ```
 
-```sql
+```sql src/main/resources/db/seed/dev/V900__dev_sample_users.sql
 -- db/seed/dev/V900__dev_sample_users.sql
 INSERT INTO user_accounts (id, email, password_hash, created_at) VALUES
     ('10000000-0000-0000-0000-000000000001', 'ivan@dev.local',  '{noop}dev', now()),
@@ -306,8 +308,8 @@ ON CONFLICT (email) DO NOTHING;
 
 Runner-ът генерира данни по ред на зависимостите: първо родителите (потребители, продукти), после децата (поръчки, редове на поръчки), като пази референциите в паметта. Записва на batch-ове със `saveAll` в отделна транзакция на batch, за да не държи една гигантска транзакция и да не расте persistence context-ът до стотици мегабайти.
 
-```java
-package com.example.shop.seed;
+```java src/main/java/com/acme/shop/common/seed/DevDataSeeder.java
+package com.acme.shop.common.seed;
 
 import net.datafaker.Faker;
 import org.springframework.boot.ApplicationArguments;
@@ -424,8 +426,8 @@ public class DevDataSeeder implements ApplicationRunner {
 
 Записът е изнесен в отделен bean, защото `@Transactional` на `private` метод в същия клас не работи (proxy-то не го вижда; виж [Транзакции](Transactions.md)). Всеки batch е своя транзакция, а след `saveAll` викаме `flush` и `clear`, за да не държим 5000 поръчки в persistence context-а.
 
-```java
-package com.example.shop.seed;
+```java src/main/java/com/acme/shop/common/seed/SeedBatchWriter.java
+package com.acme.shop.common.seed;
 
 import jakarta.persistence.EntityManager;
 import org.springframework.context.annotation.Profile;
@@ -496,7 +498,9 @@ public class SeedBatchWriter {
 
 Пример с `JdbcTemplate.batchUpdate` (Spring 6.2 `JdbcClient` няма batch API, затова за batch използваме `JdbcTemplate`, а `JdbcClient` за единични statement-и):
 
-```java
+```java src/main/java/com/acme/shop/common/seed/FastOrderLineSeeder.java
+package com.acme.shop.common.seed;
+
 @Component
 @Profile("local")
 public class FastOrderLineSeeder {
@@ -534,7 +538,9 @@ public class FastOrderLineSeeder {
 
 За staging среда понякога искаш "еднократно seed-ване при поискване", а не при всеки старт. Вместо admin endpoint (който е HTTP врата към генериране на данни и винаги завършва като инцидент), използвай аргумент: `java -jar shop.jar --seed=demo`. Runner-ът проверява `ApplicationArguments` и излиза след като свърши.
 
-```java
+```java src/main/java/com/acme/shop/common/seed/CliSeedRunner.java
+package com.acme.shop.common.seed;
+
 @Component
 @Profile("!prod")
 public class CliSeedRunner implements ApplicationRunner {
@@ -567,11 +573,11 @@ public class CliSeedRunner implements ApplicationRunner {
 Три нива на защита, защото всяко от тях само по себе си някой ден ще бъде заобиколено:
 
 1. `@Profile("local")` или `@Profile("!prod")` на всеки dev seeder bean. Bean-ът изобщо не съществува в контекста в prod.
-2. Отделен package `com.example.shop.seed.dev`, който е лесен за преглед при code review и може да се изключи с `@ComponentScan` филтър, ако някой ден реши да го изнесе в отделен модул.
+2. Отделен package `com.acme.shop.common.seed.dev`, който е лесен за преглед при code review и може да се изключи с `@ComponentScan` филтър, ако някой ден реши да го изнесе в отделен модул.
 3. Startup assertion: ако профилът е `prod`, а в контекста има какъвто и да е dev seeder, приложението спира.
 
-```java
-package com.example.shop.seed;
+```java src/main/java/com/acme/shop/common/seed/SeedSafetyCheck.java
+package com.acme.shop.common.seed;
 
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.env.Environment;
@@ -599,8 +605,8 @@ public class SeedSafetyCheck {
 
 За милиони редове (performance тест, миграция от стара система) нищо не се доближава до `COPY`. PostgreSQL JDBC драйверът дава `CopyManager`, който стриймва CSV директно в таблицата. Няма JPA, няма валидации, само constraint-и на базата.
 
-```java
-package com.example.shop.seed;
+```java src/main/java/com/acme/shop/common/seed/CsvBulkLoader.java
+package com.acme.shop.common.seed;
 
 import org.postgresql.PGConnection;
 import org.postgresql.copy.CopyManager;
@@ -644,7 +650,9 @@ public class CsvBulkLoader {
 
 За integration тестове на repository или на HTTP слой, когато данните са табличка от 5 реда:
 
-```java
+```java src/test/java/com/acme/shop/order/OrderQueryIT.java
+package com.acme.shop.order;
+
 import org.springframework.test.context.jdbc.Sql;
 import org.springframework.test.context.jdbc.SqlConfig;
 
@@ -670,7 +678,7 @@ class OrderQueryIT {
 }
 ```
 
-```sql
+```sql src/test/resources/fixtures/orders-paid.sql
 -- src/test/resources/fixtures/orders-paid.sql
 INSERT INTO user_accounts (id, email, password_hash, created_at)
 VALUES ('10000000-0000-0000-0000-000000000001', 'fixture@test.local', '{noop}x', now());
@@ -687,8 +695,8 @@ INSERT INTO orders (id, customer_id, status, created_at) VALUES
 
 За unit тестове и за service тестове SQL е неудобен: искаш "платена поръчка с два реда" на един ред код, без да мислиш за колони. Object mother е клас със статични фабрики за типични състояния на домейна, а builder-ът позволява да промениш едно поле.
 
-```java
-package com.example.shop.testsupport;
+```java src/test/java/com/acme/shop/order/OrderMother.java
+package com.acme.shop.order;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -743,7 +751,7 @@ public final class OrderMother {
 
 Използване в тест:
 
-```java
+```java src/test/java/com/acme/shop/order/ShippingServiceTest.java
 @Test
 void cannotShipUnpaidOrder() {
     Order order = OrderMother.newOrder();
@@ -760,7 +768,7 @@ void shipsPaidOrder() {
 }
 ```
 
-Mother класовете живеят в `src/test/java/.../testsupport` и може да ползват същия Datafaker за имена и адреси, но с фиксиран `Random(1)`, за да са тестовете възпроизводими.
+Mother класовете живеят в `src/test/java/com/acme/shop/<feature>` и може да ползват същия Datafaker за имена и адреси, но с фиксиран `Random(1)`, за да са тестовете възпроизводими.
 
 ## 11. Нулиране на dev базата
 
@@ -770,14 +778,14 @@ Mother класовете живеят в `src/test/java/.../testsupport` и м�
 
 Flyway 9+ забранява `clean` по подразбиране, защото някой го е пускал в production. За локална работа го разрешаваш явно и само в local профила:
 
-```yaml
+```yaml src/main/resources/application-local.yml
 # application-local.yml
 spring:
   flyway:
     clean-disabled: false
 ```
 
-```bash
+```bash scripts/db-reset.sh
 # scripts/db-reset.sh
 set -euo pipefail
 ./mvnw -q flyway:clean flyway:migrate \
@@ -794,7 +802,7 @@ set -euo pipefail
 
 Най-чистото: махни volume-а и Flyway ще създаде всичко от нулата при следващия старт, включително dev seed-овете.
 
-```yaml
+```yaml compose.yaml
 # compose.yaml
 services:
   postgres:

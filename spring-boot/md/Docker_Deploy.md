@@ -17,7 +17,7 @@
 
 Самият деплой не изисква нови starters, но тези три неща трябва да са в проекта преди първия image.
 
-```xml
+```xml pom.xml
 <!-- health probes, info, metrics -->
 <dependency>
     <groupId>org.springframework.boot</groupId>
@@ -33,7 +33,7 @@
 </dependency>
 ```
 
-```xml
+```xml pom.xml
 <build>
     <plugins>
         <plugin>
@@ -58,7 +58,7 @@
 
 `build-info` слага версия и време на build в `/actuator/info`, което е единственият сигурен начин да разбереш коя версия всъщност върти pod-ът.
 
-```yaml
+```yaml src/main/resources/application.yml
 server:
   shutdown: graceful
   forward-headers-strategy: framework
@@ -93,7 +93,7 @@ ls target/*.jar
 
 `spring-boot-maven-plugin` прави `target/orders-1.4.2.jar`, изпълним jar с всички зависимости вътре и loader, който ги зарежда.
 
-```dockerfile
+```dockerfile Dockerfile
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 COPY target/*.jar app.jar
@@ -143,7 +143,7 @@ flowchart LR
 
 ### Multi-stage Dockerfile
 
-```dockerfile
+```dockerfile Dockerfile
 # syntax=docker/dockerfile:1.7
 
 FROM eclipse-temurin:21-jdk AS build
@@ -182,7 +182,7 @@ ENTRYPOINT ["java", "-jar", "app.jar"]
 - `JAVA_TOOL_OPTIONS` се чете от JVM автоматично и се вижда в логовете при старт (`Picked up JAVA_TOOL_OPTIONS`). Така флаговете са в image-а, а деплоят може да ги override-не с env променлива.
 - Distroless алтернатива: `gcr.io/distroless/java21-debian12:nonroot` няма shell и package manager, което намалява атакуваемата повърхност, но и прави `kubectl exec` безполезен за debug. За `ENTRYPOINT` при distroless пишеш `["java", "-jar", "app.jar"]` по същия начин.
 
-```text
+```text .dockerignore
 # .dockerignore
 target/
 !target/*.jar
@@ -205,7 +205,7 @@ mvn spring-boot:build-image -Dspring-boot.build-image.imageName=ghcr.io/example/
 
 Cloud Native Buildpacks (Paketo) анализират jar-а и строят image с подходящ JRE, layered структура, non-root потребител и memory calculator, който сам задава `-Xmx` според лимита на контейнера. Няма Dockerfile за поддръжка и базовият image се обновява от Paketo с CVE fix-ове.
 
-```xml
+```xml pom.xml
 <plugin>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-maven-plugin</artifactId>
@@ -260,7 +260,7 @@ Non-heap е това, което повечето хора забравят:
 
 Class Data Sharing записва вече заредените и проверени класове в архив, който следващият старт map-ва в паметта вместо да parse-ва jar-ове. За Boot сървис стартът пада от около 4 на около 2 секунди. Boot 3.3 добавя `spring.context.exit=onRefresh`, който стартира контекста докрай, без да отваря порт и без да пипа базата, и излиза. Това е "training run" за архива.
 
-```dockerfile
+```dockerfile Dockerfile
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 # същите четири COPY --from=extract реда като в production image-а
@@ -280,7 +280,7 @@ Training run-ът трябва да работи без база и без broke
 
 Image-ът е един за всички среди, конфигурацията идва отвън. Spring Boot чете env променливи с relaxed binding: `SPRING_DATASOURCE_URL` става `spring.datasource.url`, `APP_PAYMENTS_TIMEOUT` става `app.payments.timeout`.
 
-```yaml
+```yaml k8s/deployment.yaml
 # фрагмент от Deployment
 env:
   - name: SPRING_PROFILES_ACTIVE
@@ -299,7 +299,7 @@ env:
 
 Secrets като env променливи се виждат в `kubectl describe pod` и в crash dump-ове. По-чистата опция е mounted файлове: Kubernetes Secret като volume в `/run/secrets/`, а Boot ги чете като config tree, където името на файла е ключ, а съдържанието е стойност.
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   config:
     import: optional:configtree:/run/secrets/
@@ -316,8 +316,8 @@ spring:
 
 ### Compose файл с всички зависимости
 
-```yaml
-# compose.yml
+```yaml compose.yaml
+# compose.yaml
 services:
   postgres:
     image: postgres:16-alpine
@@ -386,12 +386,12 @@ volumes:
 
 С `spring-boot-docker-compose` в classpath-а (раздел 1) приложението при старт само пуска `docker compose up` за файла в работната директория, чака healthcheck-овете и конфигурира `DataSource`, `RedisConnectionFactory` и `KafkaTemplate` от портовете на контейнерите чрез `@ServiceConnection` механизма, без да пишеш URL-и в `application-dev.yml`. Поддържа Postgres, MySQL, Redis, Kafka, RabbitMQ, MongoDB и други по image name. Mailpit не е сред тях, за него `spring.mail.host=localhost` и `port=1025` остават ръчно.
 
-```yaml
+```yaml src/main/resources/application-dev.yml
 # application-dev.yml
 spring:
   docker:
     compose:
-      file: compose.yml
+      file: compose.yaml
       lifecycle-management: start-only
       skip:
         in-tests: true
@@ -423,7 +423,7 @@ sequenceDiagram
 
 С `server.shutdown=graceful` (по подразбиране от Boot 3.4, но го пиши изрично) при SIGTERM Tomcat спира да приема нови връзки, но довършва активните заявки до `spring.lifecycle.timeout-per-shutdown-phase`. Едновременно `ApplicationAvailability` преминава в `OUT_OF_SERVICE`, така че readiness probe-ът връща 503 и loadbalancer-ът спира да праща трафик. След това се спират `SmartLifecycle` bean-овете по фази: Kafka listener containers приключват текущия batch и commit-ват offset-ите, `@Scheduled` задачите, които вече текат, се изчакват, `TaskExecutor`-ите с `wait-for-tasks-to-complete-on-shutdown` се източват.
 
-```yaml
+```yaml src/main/resources/application.yml
 server:
   shutdown: graceful
 spring:
@@ -446,7 +446,7 @@ spring:
 
 Kubernetes маха pod-а от Service endpoints и праща SIGTERM паралелно, не последователно. За една-две секунди kube-proxy и ingress-ът още пращат заявки към pod, който вече не приема връзки. `preStop` със `sleep 5` дава време на мрежата да се обнови, преди JVM да получи сигнала.
 
-```yaml
+```yaml k8s/deployment.yaml
 lifecycle:
   preStop:
     exec:
@@ -465,7 +465,7 @@ Actuator има два отделни endpoint-а, когато `management.endp
 - `/actuator/health/liveness` отговаря на въпроса "жив ли е процесът". Включва само `livenessState`. Ако върне 503, Kubernetes рестартира контейнера. Никога не слагай тук проверка към базата: при DB outage ще рестартираш всички pod-ове в цикъл и ще влошиш нещата.
 - `/actuator/health/readiness` отговаря на "може ли да поема трафик". Включва `readinessState` и това, което добавиш. Базата да, защото без нея почти всяка заявка ще fail-не. Външни API-та не: ако Stripe е бавен, не искаш целият ти сървис да изчезне от loadbalancer-а.
 
-```yaml
+```yaml src/main/resources/application.yml
 management:
   endpoint:
     health:
@@ -483,7 +483,7 @@ Health indicator-ите, custom проверки и метрики са опис
 
 ### Deployment
 
-```yaml
+```yaml k8s/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -570,7 +570,7 @@ sequenceDiagram
 
 ### HPA
 
-```yaml
+```yaml k8s/hpa.yaml
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -603,7 +603,7 @@ Flyway при старт на приложението е най-простия�
 | Init container със същия image | Миграцията свършва преди app контейнера, не се надпреварва с другите pod-ове | Все пак се пуска за всеки pod, ако имаш 3 реплики | Малки кластери |
 | Kubernetes Job преди Deployment | Веднъж, с отделен timeout и лог, деплоят чака да приключи | Нужна стъпка в pipeline-а, Helm hook или Argo sync wave | Production с няколко реплики |
 
-```yaml
+```yaml k8s/deployment.yaml
 initContainers:
   - name: migrate
     image: ghcr.io/example/orders:1.4.2
@@ -618,7 +618,7 @@ initContainers:
 
 Контейнерът пише на stdout, оркестраторът събира. Никакви файлове, никакъв logrotate в image-а. В production форматът е JSON, за да може Loki или Elasticsearch да индексират полетата без grok шаблони.
 
-```yaml
+```yaml src/main/resources/application-prod.yml
 # application-prod.yml
 logging:
   structured:
@@ -632,7 +632,7 @@ logging:
 
 ## 11. CI/CD pipeline
 
-```yaml
+```yaml .github/workflows/ci.yml
 # .github/workflows/ci.yml
 name: CI
 on:
@@ -704,7 +704,7 @@ jobs:
 
 ### SBOM и pinning
 
-```xml
+```xml pom.xml
 <plugin>
     <groupId>org.cyclonedx</groupId>
     <artifactId>cyclonedx-maven-plugin</artifactId>
@@ -724,7 +724,7 @@ jobs:
 
 Базовият image трябва да е pinned по digest, не по movable таг:
 
-```dockerfile
+```dockerfile Dockerfile
 FROM eclipse-temurin:21-jre@sha256:3f1c...a9e2
 ```
 
@@ -734,7 +734,7 @@ FROM eclipse-temurin:21-jre@sha256:3f1c...a9e2
 
 Приложението никога не вижда клиента директно, пред него има ingress controller, loadbalancer или nginx. Три неща трябва да се настроят.
 
-```yaml
+```yaml src/main/resources/application.yml
 server:
   forward-headers-strategy: framework
   tomcat:
@@ -775,8 +775,8 @@ spring:
 
 ### Една VM със systemd и docker compose
 
-```yaml
-# /opt/orders/compose.yml
+```yaml deploy/compose.yaml
+# /opt/orders/compose.yaml
 services:
   app:
     image: ghcr.io/example/orders:${ORDERS_TAG}
@@ -806,7 +806,7 @@ secrets:
     file: /etc/orders/secrets/spring.datasource.password
 ```
 
-```ini
+```ini deploy/shop.service
 # /etc/systemd/system/orders.service
 [Unit]
 Description=Orders service
@@ -881,7 +881,7 @@ journalctl -u orders -f
 - [ ] Логове на stdout в JSON за prod, `/actuator/prometheus` се scrape-ва, `/actuator/info` показва версия и git sha.
 - [ ] CI: `mvn verify` с Testcontainers, image с git sha таг, Trivy, `rollout status` след деплой.
 - [ ] `forward-headers-strategy: framework`, размер на заявка и timeout-и съгласувани между ingress и Spring.
-- [ ] Локалният `compose.yml` вдига Postgres, Redis, Mailpit и Kafka с healthchecks, а `spring-boot-docker-compose` ги wire-ва автоматично.
+- [ ] Локалният `compose.yaml` вдига Postgres, Redis, Mailpit и Kafka с healthchecks, а `spring-boot-docker-compose` ги wire-ва автоматично.
 
 ## 18. Свързани документи
 

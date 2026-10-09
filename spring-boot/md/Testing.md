@@ -14,7 +14,7 @@
 
 ## 1. Зависимости и настройка
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-test</artifactId>
@@ -55,7 +55,7 @@
 
 `spring-boot-starter-test` съдържа JUnit 5 (Jupiter), AssertJ, Mockito, Hamcrest, JSONassert, JsonPath, Awaitility и Spring Test с Spring Boot Test. Версиите на Testcontainers се управляват от Boot. Тестов профил:
 
-```yaml
+```yaml src/test/resources/application-test.yml
 # src/test/resources/application-test.yml
 spring:
   jpa:
@@ -66,7 +66,7 @@ spring:
 logging:
   level:
     root: warn
-    com.example.orders: info
+    com.acme.shop: info
     org.testcontainers: info
 ```
 
@@ -85,8 +85,8 @@ flowchart TB
 
 ## 3. Минимален работещ пример: unit тест
 
-```java
-package com.example.orders.service;
+```java src/test/java/com/acme/shop/order/OrderServiceTest.java
+package com.acme.shop.order;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -149,7 +149,9 @@ class OrderServiceTest {
 
 Object mother за тестови данни, вместо 10 реда setup във всеки тест:
 
-```java
+```java src/test/java/com/acme/shop/order/OrderMother.java
+package com.acme.shop.order;
+
 public final class OrderMother {
 
     public static Order pending(long id) {
@@ -168,8 +170,8 @@ public final class OrderMother {
 
 `@WebMvcTest(OrderController.class)` вдига само MVC слоя: controller-а, `@RestControllerAdvice`, Jackson, validation, Security filter chain, без сървиси и база. Сървисите се подменят с `@MockitoBean` (Boot 3.4+, заменя `@MockBean`).
 
-```java
-package com.example.orders.web;
+```java src/test/java/com/acme/shop/order/OrderControllerTest.java
+package com.acme.shop.order;
 
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -247,7 +249,7 @@ class OrderControllerTest {
 
 От Boot 3.4 има `MockMvcTester`, AssertJ стил без checked exceptions и без static imports:
 
-```java
+```java src/test/java/com/acme/shop/order/OrderControllerTest.java
 @Autowired MockMvcTester mvc;
 
 @Test
@@ -268,8 +270,8 @@ void getReturnsOrder() {
 
 `@DataJpaTest` вдига JPA, `DataSource`, Flyway и repository-тата, без web слоя. По подразбиране подменя базата с embedded H2, което е грешно: H2 не е Postgres, и заявка, която минава в H2, може да падне в prod. `@AutoConfigureTestDatabase(replace = NONE)` плюс `@ServiceConnection` върху контейнера дават реалния Postgres.
 
-```java
-package com.example.orders.repository;
+```java src/test/java/com/acme/shop/order/OrderRepositoryTest.java
+package com.acme.shop.order;
 
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
@@ -314,7 +316,9 @@ class OrderRepositoryTest {
 
 ### Проверка за N+1 със статистики
 
-```java
+```java src/test/java/com/acme/shop/order/OrderQueryCountTest.java
+package com.acme.shop.order;
+
 @DataJpaTest(properties = "spring.jpa.properties.hibernate.generate_statistics=true")
 @AutoConfigureTestDatabase(replace = NONE)
 @Testcontainers
@@ -347,8 +351,8 @@ class OrderQueryCountTest {
 
 Контейнерите се вдигат веднъж за цялата JVM, а не за всеки тест клас. Най-простият начин е `static` полета в абстрактен базов клас без `@Container` (Testcontainers ги спира при край на JVM през Ryuk):
 
-```java
-package com.example.orders;
+```java src/test/java/com/acme/shop/AbstractIntegrationTest.java
+package com.acme.shop;
 
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -385,7 +389,7 @@ public abstract class AbstractIntegrationTest {
 
 `@ServiceConnection` срещу `@DynamicPropertySource`: първото е декларативно и Boot знае кои properties да зададе за Postgres, Kafka, Redis, RabbitMQ, Mongo и т.н. Второто е за всичко останало: WireMock URL, custom property, контейнер без поддръжка.
 
-```java
+```java src/test/java/com/acme/shop/AbstractIntegrationTest.java
 @DynamicPropertySource
 static void props(DynamicPropertyRegistry registry) {
     registry.add("payments.base-url", wiremock::baseUrl);
@@ -394,7 +398,9 @@ static void props(DynamicPropertyRegistry registry) {
 
 ### Тест през HTTP
 
-```java
+```java src/test/java/com/acme/shop/order/OrderPaymentFlowIT.java
+package com.acme.shop.order;
+
 class OrderPaymentFlowIT extends AbstractIntegrationTest {
 
     @LocalServerPort int port;
@@ -442,7 +448,9 @@ class OrderPaymentFlowIT extends AbstractIntegrationTest {
 
 ### @JsonTest
 
-```java
+```java src/test/java/com/acme/shop/order/OrderDtoJsonTest.java
+package com.acme.shop.order;
+
 @JsonTest
 class OrderDtoJsonTest {
 
@@ -470,7 +478,9 @@ class OrderDtoJsonTest {
 
 ### @RestClientTest
 
-```java
+```java src/test/java/com/acme/shop/payment/PaymentsClientTest.java
+package com.acme.shop.payment;
+
 @RestClientTest(PaymentsClient.class)
 @Import(PaymentsClientConfig.class)
 class PaymentsClientTest {
@@ -505,12 +515,12 @@ class PaymentsClientTest {
 
 Правило: `@Transactional` е ок за `@DataJpaTest` (там тестваш заявки, не транзакционни граници; `@DataJpaTest` го включва по подразбиране). За `@SpringBootTest`, който тества сървис с `@Transactional` методи, events или `REQUIRES_NEW`, не слагай `@Transactional` на теста и чисти таблиците:
 
-```java
+```java src/test/java/com/acme/shop/order/OrderServiceIT.java
 @Sql(scripts = "/sql/clean.sql", executionPhase = Sql.ExecutionPhase.AFTER_TEST_METHOD)
 class OrderServiceIT extends AbstractIntegrationTest { ... }
 ```
 
-```sql
+```sql src/test/resources/sql/clean.sql
 -- src/test/resources/sql/clean.sql
 TRUNCATE TABLE order_line, orders, invoice RESTART IDENTITY CASCADE;
 ```
@@ -521,7 +531,9 @@ TRUNCATE TABLE order_line, orders, invoice RESTART IDENTITY CASCADE;
 
 ### Events
 
-```java
+```java src/test/java/com/acme/shop/order/OrderEventsTest.java
+package com.acme.shop.order;
+
 @SpringBootTest
 @RecordApplicationEvents
 class OrderEventsTest {
@@ -552,7 +564,9 @@ class OrderEventsTest {
 
 Method security (`@PreAuthorize`) се тества най-евтино с `@SpringBootTest` без web environment и `@WithMockUser`:
 
-```java
+```java src/test/java/com/acme/shop/order/OrderServiceAuthorizationTest.java
+package com.acme.shop.order;
+
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 class OrderServiceAuthorizationTest {
 
@@ -597,8 +611,8 @@ flowchart TB
 
 От Boot 3.1 можеш да стартираш приложението локално с контейнери вместо инсталиран Postgres и Kafka. Конфигурацията живее в `src/test/java`:
 
-```java
-package com.example.orders;
+```java src/test/java/com/acme/shop/TestcontainersConfiguration.java
+package com.acme.shop;
 
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -621,24 +635,28 @@ public class TestcontainersConfiguration {
 }
 ```
 
-```java
-public class TestOrdersApplication {
+```java src/test/java/com/acme/shop/TestShopApplication.java
+package com.acme.shop;
+
+public class TestShopApplication {
 
     public static void main(String[] args) {
-        SpringApplication.from(OrdersApplication::main)
+        SpringApplication.from(ShopApplication::main)
                 .with(TestcontainersConfiguration.class)
                 .run(args);
     }
 }
 ```
 
-Пускаш `TestOrdersApplication` от IDE-то или с `mvn spring-boot:test-run` и получаваш работещ сървис с чисти контейнери, без локална инсталация. Същата `TestcontainersConfiguration` се ползва и в тестове с `@Import(TestcontainersConfiguration.class)` вместо static полетата от раздел 6; двата подхода са еквивалентни, избери един за проекта. Spring Boot DevTools с `spring.devtools.restart` рестартира приложението без да рестартира контейнерите.
+Пускаш `TestShopApplication` от IDE-то или с `mvn spring-boot:test-run` и получаваш работещ сървис с чисти контейнери, без локална инсталация. Същата `TestcontainersConfiguration` се ползва и в тестове с `@Import(TestcontainersConfiguration.class)` вместо static полетата от раздел 6; двата подхода са еквивалентни, избери един за проекта. Spring Boot DevTools с `spring.devtools.restart` рестартира приложението без да рестартира контейнерите.
 
 ## 12. Архитектурни тестове и mutation testing
 
 ArchUnit проверява правила, които code review пропуска: controller не вика repository, domain не зависи от Spring Web, нищо не ползва `java.util.Date`.
 
-```java
+```java src/test/java/com/acme/shop/ArchitectureTest.java
+package com.acme.shop;
+
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchRule;
@@ -646,7 +664,7 @@ import com.tngtech.archunit.lang.ArchRule;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
 
-@AnalyzeClasses(packages = "com.example.orders")
+@AnalyzeClasses(packages = "com.acme.shop")
 class ArchitectureTest {
 
     @ArchTest
@@ -676,7 +694,7 @@ Mutation testing с PIT (`org.pitest:pitest-maven` плюс `pitest-junit5-plugi
 
 Unit и slice тестове в Surefire (`mvn test`), integration тестовете с контейнери в Failsafe (`mvn verify`), по naming convention `*IT.java`:
 
-```xml
+```xml pom.xml
 <plugin>
     <groupId>org.apache.maven.plugins</groupId>
     <artifactId>maven-surefire-plugin</artifactId>
@@ -737,7 +755,7 @@ Unit и slice тестове в Surefire (`mvn test`), integration тестов�
 
 ### Паралелни тестове
 
-```properties
+```properties src/test/resources/junit-platform.properties
 # src/test/resources/junit-platform.properties
 junit.jupiter.execution.parallel.enabled=true
 junit.jupiter.execution.parallel.mode.default=same_thread
@@ -748,7 +766,7 @@ Unit и slice тестове вървят паралелно по класове
 
 ### GitHub Actions
 
-```yaml
+```yaml .github/workflows/ci.yml
 name: ci
 on: [push, pull_request]
 jobs:
@@ -806,7 +824,7 @@ Flaky тест (понякога минава, понякога не) е по-л
 - [ ] `AbstractIntegrationTest` със static контейнери, `@ServiceConnection`, `withReuse(true)` и общия `@MockitoBean` набор.
 - [ ] Integration тестове без `@Transactional`, с `@Sql` clean script след всеки тест.
 - [ ] Awaitility за всичко async; `Clock` инжектиран в код, който зависи от време.
-- [ ] `TestcontainersConfiguration` и `TestOrdersApplication` за локално пускане с контейнери.
+- [ ] `TestcontainersConfiguration` и `TestShopApplication` за локално пускане с контейнери.
 - [ ] ArchUnit тест за слоевете и забрана на field injection.
 - [ ] Surefire за `*Test`, Failsafe за `*IT`, JaCoCo `check` с 70% праг, CI с `mvn verify`.
 - [ ] Фиксирани image tag-ове, без `latest`.

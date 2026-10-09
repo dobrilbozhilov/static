@@ -16,7 +16,7 @@
 
 `spring-boot-starter-web` (и всеки друг starter) дърпа `spring-boot-starter-logging`: SLF4J 2, Logback 1.5, плюс bridges за `java.util.logging` и Log4j API, така че библиотеки с други logging API-та също пишат през Logback. Не добавяш нищо за базовото логване.
 
-```xml
+```xml pom.xml
 <!-- По избор: Lombok за @Slf4j -->
 <dependency>
     <groupId>org.projectlombok</groupId>
@@ -33,7 +33,7 @@
 
 Минимална конфигурация за нов сървис:
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   application:
     name: orders
@@ -41,7 +41,7 @@ spring:
 logging:
   level:
     root: info
-    com.example.orders: debug
+    com.acme.shop: debug
     org.springframework.web: info
     org.hibernate.SQL: info
   include-application-name: true
@@ -51,8 +51,8 @@ logging:
 
 ## 2. Минимален работещ пример
 
-```java
-package com.example.orders.service;
+```java src/main/java/com/acme/shop/order/OrderService.java
+package com.acme.shop.order;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -123,11 +123,11 @@ Guard-ът е нужен само когато самото изчисление
 
 ## 3. Конфигурация в application.yml
 
-```yaml
+```yaml src/main/resources/application.yml
 logging:
   level:
     root: info
-    com.example.orders: debug
+    com.acme.shop: debug
     org.springframework.web: debug          # mapping на заявки, resolve на handler-и
     org.springframework.security: debug     # защо една заявка е 401 или 403
     org.hibernate.SQL: debug                # SQL заявките
@@ -144,7 +144,7 @@ logging:
       file-name-pattern: ${LOG_FILE}.%d{yyyy-MM-dd}.%i.gz
 ```
 
-Нивата се прилагат йерархично по пакет: `com.example.orders: debug` важи и за `com.example.orders.service`. `org.springframework.security: debug` е най-бързият начин да разбереш защо една заявка е спряна от Security filter chain (виж [Authentication](Authentication.md)). `org.hibernate.SQL: debug` е по-добро от `spring.jpa.show-sql=true`, защото минава през logger-а (с формат, ниво, JSON), а `show-sql` пише направо в stdout.
+Нивата се прилагат йерархично по пакет: `com.acme.shop: debug` важи и за `com.acme.shop.order`. `org.springframework.security: debug` е най-бързият начин да разбереш защо една заявка е спряна от Security filter chain (виж [Authentication](Authentication.md)). `org.hibernate.SQL: debug` е по-добро от `spring.jpa.show-sql=true`, защото минава през logger-а (с формат, ниво, JSON), а `show-sql` пише направо в stdout.
 
 `logging.file.name` включва файлов appender с rolling policy. В Docker не го ползвай (раздел 11), но за VM deploy е стандартът.
 
@@ -152,7 +152,7 @@ logging:
 
 Когато properties не стигат (отделен appender за audit, custom converter, различни формати по profile), пишеш `src/main/resources/logback-spring.xml`. Името със `-spring` е важно: така Boot го зарежда след като е прочел `application.yml` и `<springProfile>` и `<springProperty>` работят.
 
-```xml
+```xml src/main/resources/logback-spring.xml
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
     <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
@@ -176,7 +176,7 @@ logging:
         </root>
     </springProfile>
 
-    <logger name="com.example.orders" level="DEBUG"/>
+    <logger name="com.acme.shop" level="DEBUG"/>
 </configuration>
 ```
 
@@ -198,7 +198,7 @@ flowchart LR
 
 ### Boot 3.4+: вградена поддръжка
 
-```yaml
+```yaml src/main/resources/application.yml
 logging:
   structured:
     format:
@@ -214,7 +214,7 @@ logging:
 
 От Boot 3.5 има и `logging.structured.json.add`, `exclude`, `rename` за дребни корекции без код:
 
-```yaml
+```yaml src/main/resources/application.yml
 logging:
   structured:
     json:
@@ -228,7 +228,7 @@ logging:
 
 ### Профил по environment
 
-```yaml
+```yaml src/main/resources/application.yml
 # application.yml: default е четим текст
 logging:
   pattern:
@@ -249,7 +249,7 @@ logging:
 
 ### Boot под 3.4: logstash-logback-encoder
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>net.logstash.logback</groupId>
     <artifactId>logstash-logback-encoder</artifactId>
@@ -271,8 +271,8 @@ MDC (Mapped Diagnostic Context) е `ThreadLocal` map, която Logback доб�
 
 ### Filter, който пълни MDC
 
-```java
-package com.example.orders.web;
+```java src/main/java/com/acme/shop/common/logging/RequestContextFilter.java
+package com.acme.shop.common.logging;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -314,7 +314,9 @@ public class RequestContextFilter extends OncePerRequestFilter {
 
 `userId` го знаеш едва след Security filter chain, затова го слагаш във втори filter, подреден след `SecurityFilterChain`-а, или в `HandlerInterceptor.preHandle`, където `SecurityContextHolder` вече е попълнен. Как се подреждат filters и interceptors: [Middleware](Middleware.md).
 
-```java
+```java src/main/java/com/acme/shop/common/logging/UserContextInterceptor.java
+package com.acme.shop.common.logging;
+
 @Component
 public class UserContextInterceptor implements HandlerInterceptor {
 
@@ -350,8 +352,8 @@ flowchart TB
     R -->|"без decorator"| N("Worker thread<br/>без requestId")
 ```
 
-```java
-package com.example.orders.config;
+```java src/main/java/com/acme/shop/common/config/AsyncConfig.java
+package com.acme.shop.common.config;
 
 import org.slf4j.MDC;
 import org.springframework.context.annotation.Bean;
@@ -415,8 +417,8 @@ public void onOrderPaid(ConsumerRecord<String, OrderPaidEvent> record) {
 
 Един ред на заявка с метод, път, статус, продължителност и потребител е най-полезният лог в сървиса. Без тела по подразбиране.
 
-```java
-package com.example.orders.web;
+```java src/main/java/com/acme/shop/common/logging/AccessLogFilter.java
+package com.acme.shop.common.logging;
 
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 10)
@@ -450,7 +452,7 @@ Logger-ът се казва `access`, не класът, за да можеш д
 
 Spring има и готов `CommonsRequestLoggingFilter`:
 
-```java
+```java src/main/java/com/acme/shop/common/config/WebConfig.java
 @Bean
 CommonsRequestLoggingFilter requestLoggingFilter() {
     var filter = new CommonsRequestLoggingFilter();
@@ -476,7 +478,9 @@ CommonsRequestLoggingFilter requestLoggingFilter() {
 
 Две линии на защита. Първата е дисциплина в `toString()`: DTO-та с чувствителни полета не ги показват.
 
-```java
+```java src/main/java/com/acme/shop/auth/dto/LoginRequest.java
+package com.acme.shop.auth.dto;
+
 import lombok.ToString;
 
 public record LoginRequest(String email, @ToString.Exclude String password) {
@@ -491,8 +495,8 @@ public record LoginRequest(String email, @ToString.Exclude String password) {
 
 Втората линия е converter в Logback, който маскира по regex всичко, което прилича на карта или token, за случаите, когато някой все пак логне грешното нещо:
 
-```java
-package com.example.orders.logging;
+```java src/main/java/com/acme/shop/common/logging/MaskingMessageConverter.java
+package com.acme.shop.common.logging;
 
 import ch.qos.logback.classic.pattern.MessageConverter;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -513,8 +517,8 @@ public class MaskingMessageConverter extends MessageConverter {
 }
 ```
 
-```xml
-<conversionRule conversionWord="maskedMsg" class="com.example.orders.logging.MaskingMessageConverter"/>
+```xml src/main/resources/logback-spring.xml
+<conversionRule conversionWord="maskedMsg" class="com.acme.shop.common.logging.MaskingMessageConverter"/>
 <encoder>
     <pattern>%d{HH:mm:ss.SSS} %5p [%X{traceId:-}] %logger{36} : %maskedMsg%n%wEx</pattern>
 </encoder>
@@ -526,7 +530,9 @@ Regex маскирането струва CPU на всеки ред и не х�
 
 Едно събитие, един ред, на правилното ниво. Най-честата грешка е exception, логнат три пъти: в сървиса, в controller-а и в `@RestControllerAdvice`.
 
-```java
+```java src/main/java/com/acme/shop/common/error/ApiExceptionHandler.java
+package com.acme.shop.common.error;
+
 @RestControllerAdvice
 public class ApiExceptionHandler {
 
@@ -569,7 +575,7 @@ public class ApiExceptionHandler {
 
 Actuator `loggers` endpoint-ът променя нивото в живия процес, без рестарт и без deploy:
 
-```yaml
+```yaml src/main/resources/application.yml
 management:
   endpoints:
     web:
@@ -579,15 +585,15 @@ management:
 
 ```bash
 # текущо ниво
-curl -s http://localhost:8080/actuator/loggers/com.example.orders.payments
+curl -s http://localhost:8080/actuator/loggers/com.acme.shop.payment
 
 # включи DEBUG за пакета
-curl -s -X POST http://localhost:8080/actuator/loggers/com.example.orders.payments \
+curl -s -X POST http://localhost:8080/actuator/loggers/com.acme.shop.payment \
      -H 'Content-Type: application/json' \
      -d '{"configuredLevel":"DEBUG"}'
 
 # върни на наследеното ниво
-curl -s -X POST http://localhost:8080/actuator/loggers/com.example.orders.payments \
+curl -s -X POST http://localhost:8080/actuator/loggers/com.acme.shop.payment \
      -H 'Content-Type: application/json' \
      -d '{"configuredLevel":null}'
 ```
@@ -596,7 +602,7 @@ Endpoint-ът трябва да е зад authentication с админска р�
 
 ## 10. SQL и бавни заявки
 
-```yaml
+```yaml src/main/resources/application.yml
 logging:
   level:
     org.hibernate.SQL: debug
@@ -640,7 +646,9 @@ Audit ("кой какво промени и кога") не е същото ка
 
 Отделен logger с отделен appender, който отива в отделен stream или index:
 
-```java
+```java src/main/java/com/acme/shop/common/logging/AuditLog.java
+package com.acme.shop.common.logging;
+
 public class AuditLog {
 
     private static final Logger audit = LoggerFactory.getLogger("audit");
@@ -652,7 +660,7 @@ public class AuditLog {
 }
 ```
 
-```xml
+```xml src/main/resources/logback-spring.xml
 <appender name="AUDIT" class="ch.qos.logback.core.ConsoleAppender">
     <encoder class="net.logstash.logback.encoder.LogstashEncoder">
         <customFields>{"stream":"audit"}</customFields>
@@ -669,7 +677,9 @@ public class AuditLog {
 
 ### Проверка на log редове
 
-```java
+```java src/test/java/com/acme/shop/order/OrderServiceLoggingTest.java
+package com.acme.shop.order;
+
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 
@@ -699,17 +709,17 @@ class OrderServiceLoggingTest {
 
 ### Тихи тестове
 
-```yaml
+```yaml src/test/resources/application-test.yml
 # src/test/resources/application-test.yml
 logging:
   level:
     root: warn
-    com.example.orders: info
+    com.acme.shop: info
     access: off
     org.testcontainers: info
 ```
 
-Тестовете, които пишат мегабайти логове, забавят CI и крият реалните грешки. Debug на един тест: `@TestPropertySource(properties = "logging.level.com.example.orders=debug")` върху класа. Пълната организация: [Testing](Testing.md).
+Тестовете, които пишат мегабайти логове, забавят CI и крият реалните грешки. Debug на един тест: `@TestPropertySource(properties = "logging.level.com.acme.shop=debug")` върху класа. Пълната организация: [Testing](Testing.md).
 
 ## 14. Капани
 

@@ -26,7 +26,10 @@ function makeMarked(page, headings) {
   const marked = new Marked({ gfm: true, breaks: false });
   marked.use({
     renderer: {
-      code({ text, lang }) {
+      code({ text, lang: info }) {
+        // The fence info line is "<lang> [path]"; the path is rendered as a label above the code.
+        const [lang, ...rest] = (info || '').trim().split(/\s+/);
+        const path = rest.join(' ');
         if (lang === 'mermaid') {
           // The source lives in a script tag so the HTML parser leaves it alone.
           return (
@@ -38,7 +41,8 @@ function makeMarked(page, headings) {
           );
         }
         const cls = lang && known[lang] ? ` class="language-${known[lang]}"` : ` class="nohighlight"`;
-        return `<pre class="code"><code${cls}>${esc(text)}</code></pre>`;
+        const label = path ? `<div class="code-path" title="Път в проекта">${esc(path)}</div>` : '';
+        return `<div class="code-block${path ? ' has-path' : ''}">${label}<pre class="code"><code${cls}>${esc(text)}</code></pre></div>`;
       },
       heading({ tokens, depth }) {
         // parseInline already escapes entities, so the plain text is unescaped before being escaped again.
@@ -84,7 +88,8 @@ const pages = manifest.pages.map((p) => {
   html = html.replace('</header>\n<p>', '</header>\n<p class="lead">');
   const diagrams = (html.match(/class="diagram"/g) || []).length;
   const code = (html.match(/<pre class="code">/g) || []).length;
-  return { ...page, html, headings, diagrams, code };
+  const paths = (html.match(/class="code-path"/g) || []).length;
+  return { ...page, html, headings, diagrams, code, paths };
 });
 
 const groups = [...new Set(pages.map((p) => p.group))];
@@ -158,4 +163,4 @@ writeFileSync(join(here, 'dist', 'index.html'), out);
 const kb = (Buffer.byteLength(out) / 1024).toFixed(0);
 const totalDiagrams = pages.reduce((a, p) => a + p.diagrams, 0);
 console.log(`dist/index.html: ${kb} KB shell + ${pages.length} page files in dist/pages/, ${totalDiagrams} diagrams, ${totalCode} code blocks`);
-for (const p of pages) console.log(`  ${p.slug.padEnd(18)} ${String(p.diagrams).padStart(2)} diagrams ${String(p.code).padStart(3)} code  ${p.headings.length} sections`);
+for (const p of pages) console.log(`  ${p.slug.padEnd(18)} ${String(p.diagrams).padStart(2)} diagrams ${String(p.code).padStart(3)} code ${String(p.paths).padStart(3)} with path  ${p.headings.length} sections`);

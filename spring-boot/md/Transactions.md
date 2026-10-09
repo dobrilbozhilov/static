@@ -17,7 +17,7 @@
 
 `spring-boot-starter-data-jpa` носи всичко: `spring-tx`, `JpaTransactionManager` и AOP proxy-тата. Spring Boot конфигурира `PlatformTransactionManager` bean от типа `JpaTransactionManager` автоматично и включва `@EnableTransactionManagement`.
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   jpa:
     open-in-view: false
@@ -27,7 +27,7 @@ spring:
 
 За retry при optimistic lock:
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.retry</groupId>
     <artifactId>spring-retry</artifactId>
@@ -42,7 +42,9 @@ spring:
 
 ## 2. Минимален работещ пример
 
-```java
+```java src/main/java/com/acme/shop/order/OrderService.java
+package com.acme.shop.order;
+
 @Service
 public class OrderService {
 
@@ -112,7 +114,9 @@ sequenceDiagram
 
 `@Transactional` на ниво клас с `readOnly = true` и override на пишещите методи е удобна конвенция:
 
-```java
+```java src/main/java/com/acme/shop/invoice/InvoiceService.java
+package com.acme.shop.invoice;
+
 @Service
 @Transactional(readOnly = true)
 public class InvoiceService {
@@ -142,7 +146,9 @@ public class InvoiceService {
 
 ### REQUIRES_NEW за audit log
 
-```java
+```java src/main/java/com/acme/shop/payment/PaymentAuditService.java
+package com.acme.shop.payment;
+
 @Service
 public class PaymentAuditService {
 
@@ -159,7 +165,7 @@ public class PaymentAuditService {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/payment/PaymentService.java
 @Transactional
 public void pay(Long orderId) {
     Order order = orders.findById(orderId).orElseThrow();
@@ -205,7 +211,7 @@ public void closeAccountingPeriod(YearMonth period) { /* ... */ }
 
 По подразбиране: `RuntimeException` и `Error` правят rollback, checked exceptions правят commit. Това е историческо решение и често е грешно: `IOException` от файл по средата на операцията ще commit-не половината. Правилата се променят с атрибути:
 
-```java
+```java src/main/java/com/acme/shop/order/
 @Transactional(rollbackFor = Exception.class)
 public void importOrders(Path file) throws IOException { /* ... */ }
 
@@ -217,7 +223,7 @@ public void submit(Long orderId) { /* ... */ }
 
 ### Rollback-only и UnexpectedRollbackException
 
-```java
+```java src/main/java/com/acme/shop/order/OrderService.java
 @Transactional
 public void processOrder(Long id) {
     try {
@@ -239,7 +245,9 @@ public void processOrder(Long id) {
 
 ### Self-invocation
 
-```java
+```java src/main/java/com/acme/shop/reporting/ReportService.java
+package com.acme.shop.reporting;
+
 @Service
 public class ReportService {
 
@@ -266,7 +274,7 @@ public class ReportService {
 
 ### readOnly = true
 
-```java
+```java src/main/java/com/acme/shop/order/OrderService.java
 @Transactional(readOnly = true)
 public Page<OrderSummary> search(OrderFilter f, Pageable p) { /* ... */ }
 ```
@@ -288,7 +296,7 @@ public void quickUpdate(Long id) { /* ... */ }
 
 ### Не дръж транзакция по време на HTTP
 
-```java
+```java src/main/java/com/acme/shop/payment/PaymentService.java
 @Transactional
 public void pay(Long orderId) {
     Order order = orders.findById(orderId).orElseThrow();
@@ -299,7 +307,7 @@ public void pay(Long orderId) {
 
 През цялото време на HTTP извикването транзакцията е отворена, връзката е заета, а в Postgres сесията е `idle in transaction`. При 10 връзки в pool-а и бавен Stripe сървисът спира след десетата заявка. Правилно:
 
-```java
+```java src/main/java/com/acme/shop/payment/PaymentService.java
 public void pay(Long orderId) {
     PaymentRequest req = tx.execute(status -> paymentPreparer.prepare(orderId));
     PaymentResult result = stripe.charge(req);
@@ -313,7 +321,9 @@ public void pay(Long orderId) {
 
 За програмен контрол, когато анотацията не стига: self-invocation, транзакция в цикъл с commit на всеки N реда, или код в lambda.
 
-```java
+```java src/main/java/com/acme/shop/order/OrderImportService.java
+package com.acme.shop.order;
+
 @Service
 public class OrderImportService {
 
@@ -347,7 +357,7 @@ public class OrderImportService {
 
 Изпращане на Kafka съобщение или имейл вътре в транзакцията е грешно по два начина: ако транзакцията се rollback-не, съобщението вече е изпратено; и ако consumer-ът го получи преди commit-а и прочете от базата, не вижда реда.
 
-```java
+```java src/main/java/com/acme/shop/order/
 @Service
 public class OrderService {
 
@@ -389,7 +399,7 @@ TransactionSynchronizationManager.registerSynchronization(new TransactionSynchro
 
 Два оператора редактират една поръчка. Без locking вторият запис тихо презаписва първия. С `@Version`:
 
-```java
+```java src/main/java/com/acme/shop/order/Order.java
 @Version
 private int version;
 ```
@@ -405,7 +415,9 @@ Hibernate издава `update orders set ..., version = 3 where id = ? and vers
 
 Retry-ът трябва да е извън транзакцията, защото exception-ът идва при commit, и повторението трябва да започне нова транзакция с прясно прочетени данни:
 
-```java
+```java src/main/java/com/acme/shop/warehouse/StockTransferFacade.java
+package com.acme.shop.warehouse;
+
 @Component
 public class StockTransferFacade {
 
@@ -433,14 +445,18 @@ public class StockTransferFacade {
 
 ### Retry с @Retryable
 
-```java
+```java src/main/java/com/acme/shop/common/config/RetryConfig.java
+package com.acme.shop.common.config;
+
 @Configuration
 @EnableRetry
 public class RetryConfig {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/warehouse/StockTransferFacade.java
+package com.acme.shop.warehouse;
+
 @Component
 public class StockTransferFacade {
 
@@ -470,7 +486,9 @@ public class StockTransferFacade {
 
 Когато конфликтът не е изключение, а норма (всички поръчки се борят за същите 5 продукта на промоция), optimistic locking генерира retry буря. Тогава заключи реда при четене:
 
-```java
+```java src/main/java/com/acme/shop/warehouse/StockLevelRepository.java
+package com.acme.shop.warehouse;
+
 public interface StockLevelRepository extends JpaRepository<StockLevel, Long> {
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
@@ -494,7 +512,9 @@ public interface StockLevelRepository extends JpaRepository<StockLevel, Long> {
 
 Няколко инстанции взимат задачи от `outbox` или `jobs` таблица без да си пречат:
 
-```java
+```java src/main/java/com/acme/shop/common/jobs/JobQueueRepository.java
+package com.acme.shop.common.jobs;
+
 @Repository
 public class JobQueueRepository {
 
@@ -532,7 +552,9 @@ public class JobQueueRepository {
 
 Когато трябва да заключиш "концепция", не ред: "само една инстанция да пуска нощното приключване", "една транзакция наведнъж за клиент X". Postgres advisory lock е mutex по 64-битов ключ, който не е свързан с таблица:
 
-```java
+```java src/main/java/com/acme/shop/common/persistence/AdvisoryLocks.java
+package com.acme.shop.common.persistence;
+
 @Repository
 public class AdvisoryLocks {
 
@@ -575,7 +597,7 @@ public void closeDay(LocalDate day) {
 
 Повторен request (retry от клиента, двойно натискане, redelivery от Kafka) не трябва да създава втори запис. Транзакцията не те спасява от това: два паралелни `existsByNumber` виждат `false` и двата вмъкват. Решението е unique constraint в базата и обработка на нарушението:
 
-```sql
+```sql src/main/resources/db/migration/V20250125_1000__create_payments.sql
 create table payments (
     id              bigint generated by default as identity primary key,
     order_id        bigint not null references orders (id),
@@ -585,7 +607,7 @@ create table payments (
 );
 ```
 
-```java
+```java src/main/java/com/acme/shop/payment/PaymentService.java
 @Transactional
 public PaymentResponse create(String idempotencyKey, Long orderId, BigDecimal amount) {
     Optional<Payment> existing = payments.findByIdempotencyKey(idempotencyKey);
@@ -642,7 +664,7 @@ public Optional<Long> insertIfAbsent(String key, Long orderId, BigDecimal amount
 
 Когато ти трябва контрол в транзакционен тест:
 
-```java
+```java src/test/java/com/acme/shop/order/OrderServiceTest.java
 @Test
 @Transactional
 void submit_publishesEventAfterCommit() {
@@ -659,7 +681,7 @@ void submit_publishesEventAfterCommit() {
 
 ## 15. Пълен пример: наличност в складове
 
-```sql
+```sql src/main/resources/db/migration/V20250125_1100__create_stock_levels.sql
 create table stock_levels (
     id           bigint generated by default as identity primary key,
     product_id   bigint  not null references products (id),
@@ -671,7 +693,9 @@ create table stock_levels (
 );
 ```
 
-```java
+```java src/main/java/com/acme/shop/warehouse/StockLevel.java
+package com.acme.shop.warehouse;
+
 @Entity
 @Table(name = "stock_levels")
 public class StockLevel {
@@ -728,7 +752,9 @@ public class StockLevel {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/warehouse/StockLevelRepository.java
+package com.acme.shop.warehouse;
+
 public interface StockLevelRepository extends JpaRepository<StockLevel, Long> {
 
     Optional<StockLevel> findByProductIdAndWarehouseId(Long productId, Long warehouseId);
@@ -743,7 +769,9 @@ public interface StockLevelRepository extends JpaRepository<StockLevel, Long> {
 
 Прехвърлянето между складове е рядка операция, конфликтите са изключение, затова `@Version` плюс retry от facade-а в раздел 10:
 
-```java
+```java src/main/java/com/acme/shop/warehouse/StockTransferService.java
+package com.acme.shop.warehouse;
+
 @Service
 public class StockTransferService {
 
@@ -779,7 +807,9 @@ public class StockTransferService {
 
 Резервацията се прави при всяка поръчка, за популярни продукти стотици пъти в минута. Тук `FOR UPDATE`:
 
-```java
+```java src/main/java/com/acme/shop/warehouse/StockReservationService.java
+package com.acme.shop.warehouse;
+
 @Service
 public class StockReservationService {
 

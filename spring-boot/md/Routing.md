@@ -15,7 +15,7 @@ Routing е отговорът на въпроса "кой метод обраб�
 
 ## 1. Зависимости и настройка
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-web</artifactId>
@@ -26,7 +26,7 @@ Routing е отговорът на въпроса "кой метод обраб�
 </dependency>
 ```
 
-```yaml
+```yaml src/main/resources/application.yml
 server:
   servlet:
     context-path: /
@@ -78,7 +78,7 @@ sequenceDiagram
 
 ## 3. Минимален работещ пример
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 package com.acme.shop.order;
 
 import org.springframework.http.ResponseEntity;
@@ -146,7 +146,7 @@ Content-Type: application/json
 
 ### PathVariable
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @GetMapping("/{id}")
 OrderResponse get(@PathVariable Long id) { ... }
 
@@ -175,7 +175,7 @@ ResponseEntity<Resource> file(@PathVariable String path) { ... }
 
 ### RequestParam
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @GetMapping
 List<OrderSummary> search(
         @RequestParam String status,                                       // задължителен, 400 ако липсва
@@ -198,7 +198,9 @@ List<OrderSummary> search(
 
 За филтри с повече от три параметъра, записът на всеки като `@RequestParam` става нечетим. Spring свързва непримитивен параметър без анотация като `@ModelAttribute`, което за record означава constructor binding от query параметри:
 
-```java
+```java src/main/java/com/acme/shop/order/dto/OrderFilter.java
+package com.acme.shop.order.dto;
+
 public record OrderFilter(
         OrderStatus status,
         String customerEmail,
@@ -214,7 +216,7 @@ public record OrderFilter(
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @GetMapping
 PageResponse<OrderSummary> list(@Valid OrderFilter filter, Pageable pageable) {
     return orderService.list(filter, pageable);
@@ -229,7 +231,7 @@ GET /api/orders?status=PAID&from=2025-01-01&min_total=100&page=0&size=20&sort=cr
 
 ### RequestHeader, CookieValue, MatrixVariable
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @GetMapping("/{id}")
 OrderResponse get(@PathVariable Long id,
                   @RequestHeader("X-Tenant-Id") String tenantId,
@@ -244,7 +246,7 @@ OrderResponse get(@PathVariable Long id,
 
 ### Условия params и headers
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 // Само ако има ?export=csv
 @GetMapping(params = "export=csv", produces = "text/csv")
 ResponseEntity<Resource> exportCsv(OrderFilter filter) { ... }
@@ -264,7 +266,7 @@ Mapping с `params` е по-специфичен от същия без `params`
 
 ### consumes и produces
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
 ResponseEntity<OrderResponse> create(@RequestBody @Valid CreateOrderRequest request) { ... }
 
@@ -291,7 +293,7 @@ ResponseEntity<Resource> getPdf(@PathVariable Long id) { ... }
 
 Ако клиентът не може да задава `Accept` (линк в браузър):
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   mvc:
     contentnegotiation:
@@ -312,7 +314,7 @@ spring:
 1. Да приемеш, че URL-ите са точни, и да поправиш клиентите. Това е правилният вариант за ново API.
 2. За наследени клиенти: filter или `UrlHandlerFilter` (Spring Framework 6.2), който пренасочва или пренаписва:
 
-```java
+```java src/main/java/com/acme/shop/common/config/WebConfig.java
 @Bean
 UrlHandlerFilter urlHandlerFilter() {
     return UrlHandlerFilter
@@ -353,7 +355,7 @@ UrlHandlerFilter urlHandlerFilter() {
 
 ### URL prefix
 
-```java
+```java src/main/java/com/acme/shop/order/
 @RestController
 @RequestMapping("/api/v1/orders")
 class OrderControllerV1 { ... }
@@ -367,7 +369,7 @@ class OrderControllerV2 { ... }
 
 ### Header и media type
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @GetMapping(value = "/{id}", headers = "X-Api-Version=2")
 OrderResponseV2 getV2(@PathVariable Long id) { ... }
 
@@ -381,7 +383,7 @@ Spring Framework 7 добавя вградена поддръжка за version
 
 ### Префикси на ниво приложение
 
-```yaml
+```yaml src/main/resources/application.yml
 server:
   servlet:
     context-path: /shop        # цялото приложение, включително actuator
@@ -402,7 +404,7 @@ spring:
 
 Spring Boot сервира всичко от `classpath:/static/`, `classpath:/public/`, `classpath:/resources/` и `classpath:/META-INF/resources/` на `/**` с най-нисък приоритет: първо се опитват контролерите, после ресурсите. `src/main/resources/static/css/app.css` е достъпен на `/css/app.css`.
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   web:
     resources:
@@ -423,7 +425,7 @@ spring:
 
 Когато React или Vue frontend е в същия jar и ползва client-side routing, `GET /orders/42` в браузъра (refresh) трябва да върне `index.html`, а не 404, докато `GET /api/orders/42` трябва да стигне до контролера.
 
-```java
+```java src/main/java/com/acme/shop/common/web/SpaConfig.java
 package com.acme.shop.common.web;
 
 import org.springframework.context.annotation.Configuration;
@@ -470,7 +472,9 @@ flowchart LR
 
 Redirect-и и forward-и в MVC контролер:
 
-```java
+```java src/main/java/com/acme/shop/order/web/OrderPageController.java
+package com.acme.shop.order.web;
+
 @Controller
 @RequestMapping("/orders")
 class OrderPageController {
@@ -498,7 +502,7 @@ class OrderPageController {
 
 Алтернатива на анотациите, в която routes са код. Полезна за много малки сървиси, за динамично генерирани routes и за хора, идващи от WebFlux:
 
-```java
+```java src/main/java/com/acme/shop/product/ProductRoutes.java
 package com.acme.shop.product;
 
 import org.springframework.context.annotation.Bean;
@@ -526,7 +530,7 @@ public class ProductRoutes {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/product/ProductHandler.java
 package com.acme.shop.product;
 
 import org.springframework.stereotype.Component;
@@ -598,7 +602,7 @@ GET /actuator/mappings
 
 При старт в DEBUG ниво `RequestMappingHandlerMapping` логва броя на mapping-ите; при TRACE изписва всеки:
 
-```yaml
+```yaml src/main/resources/application.yml
 logging:
   level:
     org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping: TRACE
@@ -630,7 +634,7 @@ IllegalStateException: Ambiguous handler methods mapped for '/api/orders/a/b'
 
 ### Location header за 201
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @PostMapping
 ResponseEntity<OrderResponse> create(@RequestBody @Valid CreateOrderRequest request,
                                      UriComponentsBuilder uriBuilder) {
@@ -657,7 +661,7 @@ var location = ServletUriComponentsBuilder.fromCurrentRequest()
 
 Абсолютните URL-и зад nginx или ingress ще съдържат вътрешния host и `http`, освен ако не кажеш на Spring да чете `X-Forwarded-*` headers:
 
-```yaml
+```yaml src/main/resources/application.yml
 server:
   forward-headers-strategy: framework
 ```

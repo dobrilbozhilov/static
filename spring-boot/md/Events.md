@@ -16,7 +16,7 @@ Spring има вграден event bus: публикуваш обект, а вс
 
 Основният event механизъм е част от `spring-context`, т.е. идва с всеки starter. Нищо допълнително не трябва.
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-web</artifactId>
@@ -36,7 +36,7 @@ Spring има вграден event bus: публикуваш обект, а вс
 
 Настройки, които ще използваме за асинхронните listener-и:
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   task:
     execution:
@@ -72,8 +72,8 @@ spring:
 
 Не е нужно да наследяваш `ApplicationEvent`. От Spring 4.2 всеки обект може да е събитие. Record е идеалният избор: immutable, с `equals`, лесен за логване.
 
-```java
-package com.example.shop.order;
+```java src/main/java/com/acme/shop/order/OrderPlacedEvent.java
+package com.acme.shop.order;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -86,8 +86,8 @@ public record OrderPlacedEvent(UUID orderId, UUID customerId, long totalCents, I
 
 ### Публикуване от service
 
-```java
-package com.example.shop.order;
+```java src/main/java/com/acme/shop/order/OrderService.java
+package com.acme.shop.order;
 
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -119,10 +119,10 @@ public class OrderService {
 
 ### Listener
 
-```java
-package com.example.shop.stats;
+```java src/main/java/com/acme/shop/stats/OrderStatsListener.java
+package com.acme.shop.stats;
 
-import com.example.shop.order.OrderPlacedEvent;
+import com.acme.shop.order.OrderPlacedEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
@@ -150,7 +150,7 @@ public class OrderStatsListener {
 
 ### Условия със SpEL
 
-```java
+```java src/main/java/com/acme/shop/notification/BigOrderListener.java
 @EventListener(condition = "#event.totalCents() >= 100_00")
 public void onBigOrder(OrderPlacedEvent event) {
     salesTeam.notifyBigOrder(event.orderId());
@@ -161,7 +161,7 @@ public void onBigOrder(OrderPlacedEvent event) {
 
 ### Подредба
 
-```java
+```java src/main/java/com/acme/shop/order/OrderFulfillmentListener.java
 @Order(1)
 @EventListener
 public void reserveStock(OrderPlacedEvent event) { ... }
@@ -175,7 +175,9 @@ public void chargeCard(OrderPlacedEvent event) { ... }
 
 ### Слушане на родителски тип или интерфейс
 
-```java
+```java src/main/java/com/acme/shop/order/
+package com.acme.shop.order;
+
 public sealed interface OrderEvent permits OrderPlacedEvent, OrderCancelledEvent, OrderShippedEvent {
     UUID orderId();
 }
@@ -201,7 +203,7 @@ public class OrderAuditListener {
 
 Ако listener метод върне не-void стойност, Spring я публикува като ново събитие. Колекция или масив се публикуват елемент по елемент.
 
-```java
+```java src/main/java/com/acme/shop/loyalty/LoyaltyListener.java
 @EventListener
 public LoyaltyPointsEarnedEvent onOrderPlaced(OrderPlacedEvent event) {
     int points = (int) (event.totalCents() / 100);
@@ -225,10 +227,10 @@ public LoyaltyPointsEarnedEvent onOrderPlaced(OrderPlacedEvent event) {
 | `AFTER_COMPLETION` | след commit или rollback | почистване на ресурси, метрики |
 | `BEFORE_COMMIT` | преди commit, в същата транзакция | последна валидация, запис на outbox ред |
 
-```java
-package com.example.shop.notification;
+```java src/main/java/com/acme/shop/notification/OrderConfirmationListener.java
+package com.acme.shop.notification;
 
-import com.example.shop.order.OrderPlacedEvent;
+import com.acme.shop.order.OrderPlacedEvent;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionalEventListener;
 
@@ -254,7 +256,7 @@ public class OrderConfirmationListener {
 
 Ако `publishEvent` е извикан без активна транзакция, `@TransactionalEventListener` по подразбиране не се изпълнява изобщо. Това е честа изненада в тестове или в код, който забравя `@Transactional`. С `fallbackExecution = true` listener-ът се вика веднага, както обикновен `@EventListener`:
 
-```java
+```java src/main/java/com/acme/shop/notification/OrderConfirmationListener.java
 @TransactionalEventListener(fallbackExecution = true)
 public void onOrderPlaced(OrderPlacedEvent event) { ... }
 ```
@@ -268,7 +270,7 @@ public void onOrderPlaced(OrderPlacedEvent event) { ... }
 
 Решението е `REQUIRES_NEW`, което отваря нова, независима транзакция:
 
-```java
+```java src/main/java/com/acme/shop/order/DeliveryListener.java
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -306,8 +308,8 @@ sequenceDiagram
 
 ### Включване и executor
 
-```java
-package com.example.shop.config;
+```java src/main/java/com/acme/shop/common/config/AsyncConfig.java
+package com.acme.shop.common.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -340,7 +342,9 @@ public class AsyncConfig {
 
 ### Async listener
 
-```java
+```java src/main/java/com/acme/shop/notification/OrderConfirmationListener.java
+package com.acme.shop.notification;
+
 @Component
 public class OrderConfirmationListener {
 
@@ -360,7 +364,9 @@ public class OrderConfirmationListener {
 
 Изключение в `@Async void` метод не стига до никого: извикващият вече си е тръгнал. По подразбиране Spring го логва на ERROR през `SimpleAsyncUncaughtExceptionHandler`. Сложи си собствен, за да добавиш метрика или alert:
 
-```java
+```java src/main/java/com/acme/shop/common/config/AsyncConfig.java
+package com.acme.shop.common.config;
+
 import org.springframework.aop.interceptor.AsyncUncaughtExceptionHandler;
 import org.springframework.scheduling.annotation.AsyncConfigurer;
 
@@ -391,7 +397,7 @@ public class AsyncConfig implements AsyncConfigurer {
 
 Може да дадеш executor на `ApplicationEventMulticaster` и всеки listener става асинхронен:
 
-```java
+```java src/main/java/com/acme/shop/common/config/EventConfig.java
 @Bean(name = "applicationEventMulticaster")
 public ApplicationEventMulticaster applicationEventMulticaster(ThreadPoolTaskExecutor executor) {
     var multicaster = new SimpleApplicationEventMulticaster();
@@ -414,7 +420,7 @@ public ApplicationEventMulticaster applicationEventMulticaster(ThreadPoolTaskExe
 
 Най-простото: хвани изключението в самия listener.
 
-```java
+```java src/main/java/com/acme/shop/stats/OrderStatsListener.java
 @EventListener
 public void on(OrderPlacedEvent event) {
     try {
@@ -431,7 +437,7 @@ public void on(OrderPlacedEvent event) {
 
 `SimpleApplicationEventMulticaster` приема `ErrorHandler`. Той се прилага само когато има executor или когато е зададен изрично, и глътва изключенията на всички sync listener-и:
 
-```java
+```java src/main/java/com/acme/shop/common/config/EventConfig.java
 @Bean(name = "applicationEventMulticaster")
 public ApplicationEventMulticaster applicationEventMulticaster() {
     var multicaster = new SimpleApplicationEventMulticaster();
@@ -457,7 +463,9 @@ public ApplicationEventMulticaster applicationEventMulticaster() {
 | `AbstractAuthenticationFailureEvent` | неуспешен login | brute force детекция |
 | `RequestHandledEvent` | `DispatcherServlet` приключи заявка | custom метрики за заявки |
 
-```java
+```java src/main/java/com/acme/shop/common/config/StartupListener.java
+package com.acme.shop.common.config;
+
 @Component
 public class StartupListener {
 
@@ -480,8 +488,8 @@ public class StartupListener {
 
 Поръчката трябва да прати имейл, да обнови статистика и да отиде в Kafka. Три различни изисквания, три различни стратегии.
 
-```java
-package com.example.shop.order;
+```java src/main/java/com/acme/shop/order/OrderService.java
+package com.acme.shop.order;
 
 @Service
 public class OrderService {
@@ -507,8 +515,8 @@ public class OrderService {
 
 Статистиката е част от данните и искаме да е консистентна с поръчката. Обикновен listener, същата транзакция.
 
-```java
-package com.example.shop.stats;
+```java src/main/java/com/acme/shop/stats/OrderStatsListener.java
+package com.acme.shop.stats;
 
 @Component
 public class OrderStatsListener {
@@ -537,8 +545,8 @@ public class OrderStatsListener {
 
 ### Имейл: асинхронно, след commit
 
-```java
-package com.example.shop.notification;
+```java src/main/java/com/acme/shop/notification/OrderConfirmationListener.java
+package com.acme.shop.notification;
 
 @Component
 public class OrderConfirmationListener {
@@ -567,8 +575,8 @@ public class OrderConfirmationListener {
 
 Публикуването в Kafka директно от `AFTER_COMMIT` listener има дупка: процесът може да умре между commit-а и `kafkaTemplate.send`. Решението е outbox: записваш съобщението в таблица в същата транзакция, а отделен relay го изпраща.
 
-```java
-package com.example.shop.outbox;
+```java src/main/java/com/acme/shop/common/events/OrderOutboxListener.java
+package com.acme.shop.common.events;
 
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -603,8 +611,8 @@ public class OrderOutboxListener {
 
 Spring Data позволява събитията да се събират в самия агрегат и да се публикуват автоматично при `save()`. Така `OrderService` не знае за събития, а `Order` сам казва какво му се е случило.
 
-```java
-package com.example.shop.order;
+```java src/main/java/com/acme/shop/order/Order.java
+package com.acme.shop.order;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -649,7 +657,7 @@ public class Order extends AbstractAggregateRoot<Order> {
 
 Spring Modulith добавя event publication registry: всяко събитие с listener `@ApplicationModuleListener` се записва в таблица `event_publication` в същата транзакция, а след успешно изпълнение на listener-а записът се маркира като завършен. При рестарт незавършените се пускат отново.
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.modulith</groupId>
     <artifactId>spring-modulith-starter-jpa</artifactId>
@@ -657,8 +665,8 @@ Spring Modulith добавя event publication registry: всяко събити
 </dependency>
 ```
 
-```java
-package com.example.shop.notification;
+```java src/main/java/com/acme/shop/notification/OrderConfirmationListener.java
+package com.acme.shop.notification;
 
 import org.springframework.modulith.events.ApplicationModuleListener;
 
@@ -674,7 +682,7 @@ public class OrderConfirmationListener {
 
 `@ApplicationModuleListener` е `@Async` + `@Transactional(REQUIRES_NEW)` + `@TransactionalEventListener` в една анотация, плюс записа в registry-то. Настройки:
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   modulith:
     events:
@@ -697,7 +705,7 @@ In-process събитията живеят в един JVM процес. Те н
 
 ### Outbox таблица
 
-```sql
+```sql src/main/resources/db/migration/V20250110_1100__create_outbox.sql
 create table outbox (
     id            uuid primary key,
     aggregate     text        not null,
@@ -714,8 +722,8 @@ create index outbox_unsent_idx on outbox (created_at) where sent_at is null;
 
 ### Relay с SKIP LOCKED
 
-```java
-package com.example.shop.outbox;
+```java src/main/java/com/acme/shop/common/events/OutboxRelay.java
+package com.acme.shop.common.events;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -791,7 +799,9 @@ flowchart LR
 
 Spring Test има `@RecordApplicationEvents`, което закача `ApplicationEvents` bean, в който се трупат всички публикувани събития по време на теста:
 
-```java
+```java src/test/java/com/acme/shop/order/OrderServiceTest.java
+package com.acme.shop.order;
+
 import org.springframework.test.context.event.ApplicationEvents;
 import org.springframework.test.context.event.RecordApplicationEvents;
 
@@ -824,7 +834,7 @@ class OrderServiceTest {
 
 `@SpringBootTest` + `@Transactional` на теста прави rollback в края, т.е. `AFTER_COMMIT` listener-ите никога не се изпълняват. Или не маркирай теста с `@Transactional` и чисти данните ръчно, или използвай `TestTransaction.flagForCommit()` + `TestTransaction.end()`:
 
-```java
+```java src/test/java/com/acme/shop/order/OrderServiceTest.java
 @Test
 @Transactional
 void confirmationSentAfterCommit() {

@@ -13,7 +13,7 @@ Authentication е отговорът на въпроса "кой прави то
 
 ## 1. Зависимости и настройка
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-security</artifactId>
@@ -37,7 +37,7 @@ Authentication е отговорът на въпроса "кой прави то
 
 Само със `spring-boot-starter-security` в classpath-а Spring Boot прави следното: всеки endpoint изисква authentication, има form login на `/login` и HTTP Basic, един потребител `user` с парола, която се печата в лога при старт (`Using generated security password: ...`), CSRF защита е включена и се пращат security header-и. Това е умишлено: по-добре да е заключено и да отвориш каквото трябва, отколкото обратното. Първата ти задача е да замениш генерирания потребител със `SecurityFilterChain` bean и `UserDetailsService`.
 
-```yaml
+```yaml src/main/resources/application.yml
 app:
   security:
     jwt:
@@ -107,7 +107,7 @@ sequenceDiagram
 
 Паролата никога не се пази в чист вид. `PasswordEncoder` bean-ът е един за цялото приложение: `PasswordEncoderFactories.createDelegatingPasswordEncoder()`. `DelegatingPasswordEncoder` записва хеша с prefix (`{bcrypt}$2a$10$...`), така че по-късно можеш да минеш на argon2 без да счупиш старите хешове. По подразбиране делегиращият encoder хешира с bcrypt (strength 10). За argon2 (препоръка на OWASP за нови системи): `Argon2PasswordEncoder.defaultsForSpringSecurity_v5_8()`, увит в `DelegatingPasswordEncoder` с id `argon2`.
 
-```java
+```java src/main/java/com/acme/shop/user/
 @Entity
 @Table(name = "user_accounts")
 public class UserAccount {
@@ -141,7 +141,9 @@ public enum Role { ADMIN, MANAGER, CUSTOMER }
 
 `UserDetails` е контрактът, който `DaoAuthenticationProvider` разбира. Собствен `AppUserPrincipal` е по-удобен от вградения `User`, защото носи и `id`, който ти трябва навсякъде.
 
-```java
+```java src/main/java/com/acme/shop/user/AppUserPrincipal.java
+package com.acme.shop.user;
+
 import org.springframework.security.core.userdetails.UserDetails;
 
 public record AppUserPrincipal(UUID id, String email, String passwordHash, boolean enabled,
@@ -162,7 +164,9 @@ public record AppUserPrincipal(UUID id, String email, String passwordHash, boole
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/user/JpaUserDetailsService.java
+package com.acme.shop.user;
+
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 
@@ -191,7 +195,9 @@ public class JpaUserDetailsService implements UserDetailsService {
 
 Най-малката конфигурация, която заменя генерирания потребител: публичен каталог, всичко останало зад HTTP Basic (удобен за curl, докато изградиш JWT).
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
+package com.acme.shop.common.config;
+
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -221,7 +227,7 @@ public class SecurityConfig {
 
 Класическият вариант за Thymeleaf приложение: form login, session cookie `JSESSIONID`, logout. Spring Security пази `SecurityContext` в HTTP session-а, а cookie-то го идентифицира.
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 @Bean
 public SecurityFilterChain webFilterChain(HttpSecurity http) throws Exception {
     http
@@ -265,7 +271,9 @@ Login формата е `POST /login` с полета `email` и `password`; Thy
 
 ### Ключове, encoder и decoder
 
-```java
+```java src/main/java/com/acme/shop/common/config/JwtConfig.java
+package com.acme.shop.common.config;
+
 import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
@@ -306,7 +314,7 @@ public class JwtConfig {
 
 Refresh token-ът е случаен string, който се връща на клиента, а в базата стои само SHA-256 хешът му (ако базата изтече, token-ите не стават за нищо). Rotation: всяко използване отменя стария и издава нов. Reuse detection: ако се появи вече отменен token, някой го е откраднал, и отменяме всички token-и на потребителя.
 
-```java
+```java src/main/java/com/acme/shop/auth/
 @Entity
 @Table(name = "refresh_tokens")
 public class RefreshToken {
@@ -341,7 +349,9 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/auth/TokenService.java
+package com.acme.shop.auth;
+
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
 import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
@@ -435,7 +445,9 @@ public class TokenService {
 
 ### Login, refresh и logout endpoint-и
 
-```java
+```java src/main/java/com/acme/shop/auth/AuthController.java
+package com.acme.shop.auth;
+
 import org.springframework.http.ResponseCookie;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -520,7 +532,7 @@ Content-Type: application/json
 
 ### Resource server конфигурация
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 @Bean
 public SecurityFilterChain apiFilterChain(HttpSecurity http, JwtDecoder jwtDecoder,
                                           ProblemDetailAuthenticationEntryPoint entryPoint,
@@ -559,7 +571,7 @@ private JwtAuthenticationConverter jwtAuthenticationConverter() {
 
 `spring-boot-starter-oauth2-client` реализира Authorization Code flow: redirect към provider-а, callback на `/login/oauth2/code/{registrationId}`, размяна на code за token, зареждане на профила. Резултатът е session с `OAuth2User` или `OidcUser` principal.
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   security:
     oauth2:
@@ -577,7 +589,9 @@ spring:
 
 Google и GitHub са предефинирани в `CommonOAuth2Provider`, затова не описваш `provider` endpoint-ите. Единственото, което ти трябва отвъд конфигурацията, е да свържеш външния профил с локален `UserAccount`, за да имаш `id`, роли и собствени данни:
 
-```java
+```java src/main/java/com/acme/shop/auth/LinkingOAuth2UserService.java
+package com.acme.shop.auth;
+
 import org.springframework.security.oauth2.client.userinfo.DefaultOAuth2UserService;
 import org.springframework.security.oauth2.client.userinfo.OAuth2UserRequest;
 import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
@@ -614,7 +628,7 @@ Google връща OpenID Connect `id_token`, затова за него Spring �
 
 Когато организацията има Keycloak (или Entra ID, Okta, Auth0), приложението не издава token-и изобщо. Клиентите ги получават от IdP-то, а ти само ги валидираш по `issuer-uri`: Spring тегли `.well-known/openid-configuration`, намира JWKS endpoint-а и валидира подписа с ротиращи ключове.
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   security:
     oauth2:
@@ -626,7 +640,7 @@ spring:
 
 Keycloak слага ролите в `realm_access.roles` или `resource_access.<client>.roles`, не в top-level claim, затова конверторът е ръчен:
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
 converter.setJwtGrantedAuthoritiesConverter(jwt -> {
     Map<String, Object> realmAccess = jwt.getClaimAsMap("realm_access");
@@ -650,7 +664,9 @@ converter.setPrincipalClaimName("preferred_username");
 
 По подразбиране API получава празно 401 или redirect към `/login`, което за JSON клиент е безполезно. Entry point-ът и handler-ът пишат `ProblemDetail`, същият формат като останалите грешки, виж [Грешки и ProblemDetail](Exception_Handling.md).
 
-```java
+```java src/main/java/com/acme/shop/common/security/ProblemDetailAuthenticationEntryPoint.java
+package com.acme.shop.common.security;
+
 import org.springframework.http.ProblemDetail;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.AuthenticationEntryPoint;
@@ -683,7 +699,7 @@ public class ProblemDetailAuthenticationEntryPoint implements AuthenticationEntr
 
 ### Текущият потребител в controller и в service
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @GetMapping("/api/orders/mine")
 public List<OrderSummary> mine(@AuthenticationPrincipal Jwt jwt) {
     return orderService.forCustomer(UUID.fromString(jwt.getSubject()));
@@ -692,7 +708,7 @@ public List<OrderSummary> mine(@AuthenticationPrincipal Jwt jwt) {
 
 Алтернативата е параметър `Authentication authentication` и `authentication.getName()`. `@AuthenticationPrincipal` дава principal-а, какъвто е: `Jwt` при resource server, `AppUserPrincipal` при form login, `OAuth2User` при OAuth2 login. Ако едно приложение има повече от един от тях, controller-ите стават грозни. Решението е `CurrentUser` record и provider, който го конструира от всеки вид principal и работи еднакво в controller и в service:
 
-```java
+```java src/main/java/com/acme/shop/common/security/
 public record CurrentUser(UUID id, String email, Set<String> roles) {}
 
 @Component
@@ -728,7 +744,9 @@ public class CurrentUserProvider {
 
 Cron job-ове, webhook-ове от партньори и вътрешни сървиси нямат потребител и парола. API ключът е случаен string, който се пази хеширан в таблица `api_keys` със собственик, scope-ове и `expires_at`, и се праща в header `X-Api-Key`.
 
-```java
+```java src/main/java/com/acme/shop/common/security/ApiKeyAuthenticationFilter.java
+package com.acme.shop.common.security;
+
 import org.springframework.security.web.authentication.preauth.PreAuthenticatedAuthenticationToken;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -758,7 +776,7 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
 
 `PreAuthenticatedAuthenticationToken` с authorities в конструктора е вече authenticated, затова не ти трябва собствен `Authentication` клас. Filter-ът не отказва заявки: ако ключът липсва или е невалиден, просто не слага authentication и `AuthorizationFilter` ще върне 401 през entry point-а. Отделен chain за вътрешните пътища:
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 @Bean
 @Order(1)
 public SecurityFilterChain internalFilterChain(HttpSecurity http, ApiKeyService apiKeys,
@@ -784,7 +802,7 @@ public SecurityFilterChain internalFilterChain(HttpSecurity http, ApiKeyService 
 
 Chain 1 (`@Order(1)`, `securityMatcher("/internal/**")`) и chain 2 (`@Order(2)`, `securityMatcher("/api/**", "/auth/**")`) са показани в секции 9 и 6; третият, без `securityMatcher`, е за web:
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 @Bean
 @Order(3)
 public SecurityFilterChain webFilterChain(HttpSecurity http) throws Exception {
@@ -820,7 +838,9 @@ MFA с TOTP (Google Authenticator) се добавя като втора стъ�
 
 `spring-security-test` дава три инструмента, всеки за различен слой. Общата настройка на `MockMvc` и Testcontainers е в [Testing](Testing.md).
 
-```java
+```java src/test/java/com/acme/shop/order/OrderControllerSecurityTest.java
+package com.acme.shop.order;
+
 @WebMvcTest(OrderController.class)
 @Import(SecurityConfig.class)
 class OrderControllerSecurityTest {

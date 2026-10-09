@@ -23,7 +23,7 @@ OpenAPI спецификацията е договорът между твоя b
 
 ### Maven зависимост
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springdoc</groupId>
     <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
@@ -40,7 +40,7 @@ OpenAPI спецификацията е договорът между твоя b
 
 ### Минимален application.yml
 
-```yaml
+```yaml src/main/resources/application.yml
 springdoc:
   api-docs:
     path: /api-docs
@@ -50,7 +50,7 @@ springdoc:
     tags-sorter: alpha
     display-request-duration: true
     try-it-out-enabled: true
-  packages-to-scan: com.example.orders.api
+  packages-to-scan: com.acme.shop
   paths-to-match: /api/**
   default-produces-media-type: application/json
 ```
@@ -61,7 +61,7 @@ springdoc:
 
 Решението зависи от аудиторията. За публично API документацията е част от продукта и остава включена. За вътрешен сървис обикновено я изключваш в `prod` профила или я защитаваш със security.
 
-```yaml
+```yaml src/main/resources/application-prod.yml
 # application-prod.yml
 springdoc:
   api-docs:
@@ -72,7 +72,7 @@ springdoc:
 
 Ако предпочиташ да я оставиш, но само за админи, добави правило в `SecurityFilterChain`. Пътищата са тези от `springdoc.api-docs.path` и `springdoc.swagger-ui.path` плюс статичните ресурси на UI-а.
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 @Bean
 SecurityFilterChain apiSecurity(HttpSecurity http) throws Exception {
     http.authorizeHttpRequests(a -> a
@@ -89,8 +89,8 @@ SecurityFilterChain apiSecurity(HttpSecurity http) throws Exception {
 
 Без нито една анотация springdoc вече генерира спецификация от сигнатурите на контролерите и от record DTO-тата. Този контролер е достатъчен, за да видиш работещ Swagger UI.
 
-```java
-package com.example.orders.api;
+```java src/main/java/com/acme/shop/order/OrderController.java
+package com.acme.shop.order;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
@@ -118,7 +118,8 @@ public class OrderController {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/dto/
+package com.acme.shop.order.dto;
 
 import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
@@ -151,8 +152,8 @@ public enum OrderStatus { NEW, PAID, SHIPPED, CANCELLED }
 
 Заглавие, версия, сървъри и контакт се задават веднъж с bean от тип `OpenAPI`.
 
-```java
-package com.example.orders.config;
+```java src/main/java/com/acme/shop/common/config/OpenApiConfig.java
+package com.acme.shop.common.config;
 
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Contact;
@@ -187,7 +188,9 @@ public class OpenApiConfig {
 
 ### Tag и Operation
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
+package com.acme.shop.order;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.*;
@@ -226,7 +229,9 @@ public class OrderController {
 
 ### Schema на records и полета
 
-```java
+```java src/main/java/com/acme/shop/order/dto/
+package com.acme.shop.order.dto;
+
 import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.media.Schema.RequiredMode;
@@ -289,7 +294,9 @@ springdoc сам превежда стандартните Java типове:
 | `@Pattern(regexp)` | `pattern` |
 | `@Email` | `format: email` |
 
-```java
+```java src/main/java/com/acme/shop/user/dto/RegisterUserRequest.java
+package com.acme.shop.user.dto;
+
 public record RegisterUserRequest(
         @NotBlank @Email String email,
         @NotBlank @Size(min = 12, max = 128) String password) {}
@@ -314,7 +321,7 @@ RegisterUserRequest:
 
 Без анотация springdoc би описал `Pageable` като един обект в body, което е грешно. `@ParameterObject` го разгъва на query параметри `page`, `size` и `sort`.
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Pageable;
 
@@ -333,7 +340,9 @@ public PageResponse<OrderResponse> list(
 
 Generic record се описва коректно, springdoc генерира отделна схема за всяка конкретизация (`PageResponseOrderResponse`).
 
-```java
+```java src/main/java/com/acme/shop/common/web/PageResponse.java
+package com.acme.shop.common.web;
+
 @Schema(description = "Страница с резултати")
 public record PageResponse<T>(
         @ArraySchema(schema = @Schema(description = "Елементите на текущата страница")) List<T> items,
@@ -349,7 +358,7 @@ public record PageResponse<T>(
 
 Upload с `@RequestPart MultipartFile` се описва като `multipart/form-data` с поле от тип `string`, `format: binary`. Ако заедно с файла пращаш JSON метаданни, двете части се виждат като отделни полета.
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @Operation(summary = "Прикачва документ към поръчката")
 @PostMapping(value = "/{id}/documents", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
 @ResponseStatus(HttpStatus.CREATED)
@@ -369,7 +378,9 @@ Download endpoint, който връща `ResponseEntity<Resource>`, е добр
 
 Security схемата се декларира веднъж и после се реферира от операциите. Най-лесно е с анотация на `@Configuration` клас.
 
-```java
+```java src/main/java/com/acme/shop/common/config/OpenApiSecurityConfig.java
+package com.acme.shop.common.config;
+
 import io.swagger.v3.oas.annotations.enums.SecuritySchemeIn;
 import io.swagger.v3.oas.annotations.enums.SecuritySchemeType;
 import io.swagger.v3.oas.annotations.security.SecurityScheme;
@@ -387,7 +398,7 @@ public class OpenApiSecurityConfig {}
 
 За да важи за всички операции, добави глобално изискване в `OpenAPI` bean-а:
 
-```java
+```java src/main/java/com/acme/shop/common/config/OpenApiConfig.java
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 
 @Bean
@@ -400,7 +411,7 @@ OpenAPI ordersOpenApi() {
 
 Публичните операции (login, health, регистрация) получават празен списък, който отменя глобалното изискване:
 
-```java
+```java src/main/java/com/acme/shop/auth/AuthController.java
 import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 
 @SecurityRequirements   // празно: без security за тази операция
@@ -412,7 +423,9 @@ public TokenResponse login(@RequestBody @Valid LoginRequest request) { ... }
 
 Когато token-ите идват от Keycloak или друг identity provider, Swagger UI може сам да направи login flow. Схемата описва URL-ите и scope-овете.
 
-```java
+```java src/main/java/com/acme/shop/common/config/OAuthDocsConfig.java
+package com.acme.shop.common.config;
+
 import io.swagger.v3.oas.annotations.security.OAuthFlow;
 import io.swagger.v3.oas.annotations.security.OAuthFlows;
 import io.swagger.v3.oas.annotations.security.OAuthScope;
@@ -428,7 +441,7 @@ import io.swagger.v3.oas.annotations.security.OAuthScope;
 public class OAuthDocsConfig {}
 ```
 
-```yaml
+```yaml src/main/resources/application.yml
 springdoc:
   swagger-ui:
     oauth:
@@ -443,7 +456,9 @@ springdoc:
 
 Една спецификация с всичко вътре е объркваща за външен потребител и издава вътрешни endpoint-и. `GroupedOpenApi` bean-овете правят отделни спецификации, всяка на свой URL (`/api-docs/public`, `/api-docs/admin`), а Swagger UI показва dropdown за избор.
 
-```java
+```java src/main/java/com/acme/shop/common/config/OpenApiGroups.java
+package com.acme.shop.common.config;
+
 import org.springdoc.core.models.GroupedOpenApi;
 
 @Configuration
@@ -470,7 +485,7 @@ public class OpenApiGroups {
 }
 ```
 
-Трета група `internal` се прави по същия начин с `packagesToScan("com.example.orders.internal")` вместо path. Когато има поне един `GroupedOpenApi` bean, глобалните `springdoc.paths-to-match` и `packages-to-scan` спират да важат, групите ги заместват. Всяка група може да има и собствен `OpenApiCustomizer` чрез `.addOpenApiCustomizer(...)`, например различно заглавие и различни security схеми.
+Трета група `internal` се прави по същия начин с `packagesToScan("com.acme.shop.internal")` вместо path. Когато има поне един `GroupedOpenApi` bean, глобалните `springdoc.paths-to-match` и `packages-to-scan` спират да важат, групите ги заместват. Всяка група може да има и собствен `OpenApiCustomizer` чрез `.addOpenApiCustomizer(...)`, например различно заглавие и различни security схеми.
 
 ### Версии на API в спецификацията
 
@@ -482,7 +497,7 @@ public class OpenApiGroups {
 
 `OpenApiCustomizer` получава готовата спецификация и може да я промени преди сервиране. Най-честата употреба е да добавиш `ProblemDetail` схемата и стандартните грешки навсякъде, за да не повтаряш `@ApiResponse` по контролерите.
 
-```java
+```java src/main/java/com/acme/shop/common/openapi/OpenApiCustomizers.java
 import io.swagger.v3.oas.models.media.Content;
 import io.swagger.v3.oas.models.media.MediaType;
 import io.swagger.v3.oas.models.media.Schema;
@@ -512,7 +527,7 @@ OpenApiCustomizer standardErrors() {
 
 `OperationCustomizer` се вика за всяка операция и има достъп до `HandlerMethod`. Класически случай е да документираш header като `X-Request-Id`, който filter-ът ти чете или генерира (виж [Middleware](Middleware.md)).
 
-```java
+```java src/main/java/com/acme/shop/common/openapi/OpenApiCustomizers.java
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.media.StringSchema;
 import io.swagger.v3.oas.models.parameters.HeaderParameter;
@@ -567,7 +582,7 @@ flowchart LR
 
 Плъгинът генерира интерфейси в `target/generated-sources`, а ти ги имплементираш в обикновен `@RestController`.
 
-```xml
+```xml pom.xml
 <plugin>
     <groupId>org.openapitools</groupId>
     <artifactId>openapi-generator-maven-plugin</artifactId>
@@ -580,8 +595,8 @@ flowchart LR
             <configuration>
                 <inputSpec>${project.basedir}/src/main/resources/openapi/orders.yaml</inputSpec>
                 <generatorName>spring</generatorName>
-                <apiPackage>com.example.orders.generated.api</apiPackage>
-                <modelPackage>com.example.orders.generated.model</modelPackage>
+                <apiPackage>com.acme.shop.generated.api</apiPackage>
+                <modelPackage>com.acme.shop.generated.model</modelPackage>
                 <generateSupportingFiles>false</generateSupportingFiles>
                 <configOptions>
                     <useSpringBoot3>true</useSpringBoot3>
@@ -606,10 +621,12 @@ flowchart LR
 
 Алтернатива на `interfaceOnly` е `delegatePattern=true`: плъгинът генерира и контролера, който делегира към интерфейс `OrdersApiDelegate`, а ти имплементираш само делегата. Изборът е вкусов, `interfaceOnly` дава повече контрол върху контролера (например `@PreAuthorize`), `delegatePattern` държи анотациите изцяло в генерирания код.
 
-```java
-import com.example.orders.generated.api.OrdersApi;
-import com.example.orders.generated.model.CreateOrderRequest;
-import com.example.orders.generated.model.OrderResponse;
+```java src/main/java/com/acme/shop/order/OrderController.java
+package com.acme.shop.order;
+
+import com.acme.shop.generated.api.OrdersApi;
+import com.acme.shop.generated.model.CreateOrderRequest;
+import com.acme.shop.generated.model.OrderResponse;
 
 @RestController
 public class OrderController implements OrdersApi {
@@ -652,8 +669,8 @@ npx openapi-typescript http://localhost:8080/api-docs -o src/api/schema.d.ts
 
 Спецификацията трябва да е файл в репото или артефакт в CI, за да може да се diff-ва. Най-простият начин е интеграционен тест, който вдига контекста, тегли `/api-docs.yaml` и го записва.
 
-```java
-package com.example.orders;
+```java src/test/java/com/acme/shop/OpenApiExportTest.java
+package com.acme.shop;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -679,7 +696,7 @@ class OpenApiExportTest {
 
 ### Diff за breaking changes с oasdiff
 
-```yaml
+```yaml .github/workflows/api-check.yml
 # .github/workflows/api-check.yml
 name: API contract
 on: [pull_request]
@@ -708,7 +725,7 @@ OpenAPI описва само HTTP. Събитията по Kafka или дру�
 
 ## 10. Swagger UI съвети
 
-```yaml
+```yaml src/main/resources/application.yml
 springdoc:
   swagger-ui:
     display-request-duration: true
@@ -729,8 +746,8 @@ springdoc:
 
 ## 11. Пълен пример: контролер и резултатът
 
-```java
-package com.example.orders.api;
+```java src/main/java/com/acme/shop/order/OrderController.java
+package com.acme.shop.order;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;

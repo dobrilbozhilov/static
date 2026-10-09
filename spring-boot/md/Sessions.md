@@ -16,7 +16,7 @@
 
 За `HttpSession` не трябва нищо извън web starter-а. Spring Security идва с `spring-boot-starter-security`. Spring Session се добавя само когато имаш повече от една инстанция или искаш да управляваш сесии централно.
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-web</artifactId>
@@ -41,7 +41,7 @@
 </dependency>
 ```
 
-```yaml
+```yaml src/main/resources/application.yml
 server:
   servlet:
     session:
@@ -76,8 +76,8 @@ server:
 
 Количка, която живее в сесията преди потребителят да е логнат. Три начина да стигнеш до нея: инжектиран `HttpSession`, `@SessionAttribute` и session-scoped bean.
 
-```java
-package com.example.orders.cart;
+```java src/main/java/com/acme/shop/cart/CartController.java
+package com.acme.shop.cart;
 
 import jakarta.servlet.http.HttpSession;
 import org.springframework.http.ResponseEntity;
@@ -115,8 +115,8 @@ public class CartController {
 }
 ```
 
-```java
-package com.example.orders.cart;
+```java src/main/java/com/acme/shop/cart/Cart.java
+package com.acme.shop.cart;
 
 import java.io.Serializable;
 import java.util.LinkedHashMap;
@@ -156,7 +156,9 @@ Content-Type: application/json
 
 Когато няколко controller-а работят с една и съща структура, `@SessionScope` bean е по-чист от ръчни `getAttribute`. Spring създава proxy, така че bean-ът може да се инжектира в singleton controller.
 
-```java
+```java src/main/java/com/acme/shop/cart/SessionCart.java
+package com.acme.shop.cart;
+
 @Component
 @SessionScope
 public class SessionCart implements Serializable {
@@ -193,7 +195,7 @@ sequenceDiagram
 
 `HttpSessionSecurityContextRepository` е имплементацията по подразбиране на `SecurityContextRepository`. В Security 6 контекстът се зарежда лениво от `SecurityContextHolderFilter` и се записва изрично от компонента, който го е променил. Ако сам сменяш `Authentication` (например след програмен login), трябва и ти да го запишеш:
 
-```java
+```java src/main/java/com/acme/shop/auth/AuthService.java
 public void loginProgrammatically(HttpServletRequest req, HttpServletResponse res, Authentication auth) {
     var context = SecurityContextHolder.createEmptyContext();
     context.setAuthentication(auth);
@@ -211,7 +213,7 @@ public void loginProgrammatically(HttpServletRequest req, HttpServletResponse re
 | `NEVER` | Не създава сесия, но ползва вече съществуваща, ако browser-ът я прати. |
 | `STATELESS` | Не създава и не чете сесия. `SecurityContext` живее само за една заявка. За JWT API. |
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 @Bean
 SecurityFilterChain api(HttpSecurity http) throws Exception {
     http
@@ -230,7 +232,7 @@ SecurityFilterChain api(HttpSecurity http) throws Exception {
 
 Атаката: нападателят дава на жертвата предварително известен session id, жертвата се логва, нападателят ползва същия id. Защитата е да смениш id-то при login. Spring Security го прави по подразбиране с `changeSessionId()`, който пази атрибутите и сменя само идентификатора. Не го изключвай; ако имаш нужда от нова чиста сесия при login, ползвай `newSession()`.
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 .sessionManagement(s -> s.sessionFixation(f -> f.changeSessionId()))
 ```
 
@@ -238,7 +240,7 @@ SecurityFilterChain api(HttpSecurity http) throws Exception {
 
 Ограничаването до една активна сесия на потребител изисква Security да знае кои сесии са живи. `HttpSessionEventPublisher` препраща Servlet събитията за създаване и унищожаване към `SessionRegistry`.
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 @Bean
 SecurityFilterChain web(HttpSecurity http) throws Exception {
     http
@@ -260,7 +262,7 @@ HttpSessionEventPublisher httpSessionEventPublisher() {
 
 `maxSessionsPreventsLogin(false)` означава, че новият login изгонва стария; `true` отказва новия login, докато старата сесия е жива, което е неприятно за потребител, който е затворил browser-а без logout. При Spring Session регистърът се замества със `SpringSessionBackedSessionRegistry`, за да вижда сесиите от всички инстанции:
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 @Bean
 SpringSessionBackedSessionRegistry<? extends Session> sessionRegistry(
         FindByIndexNameSessionRepository<? extends Session> sessions) {
@@ -272,7 +274,7 @@ SpringSessionBackedSessionRegistry<? extends Session> sessionRegistry(
 
 ### Logout
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 .logout(l -> l
     .logoutUrl("/logout")
     .invalidateHttpSession(true)
@@ -304,7 +306,7 @@ flowchart LR
 
 В Boot 3 `spring.session.store-type` вече не съществува; наличието на `spring-session-data-redis` в classpath е достатъчно, а `@EnableRedisHttpSession` е нужна само ако искаш да override-неш автоконфигурацията.
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   data:
     redis:
@@ -326,7 +328,9 @@ Spring Session подменя `HttpSession` със своя имплемента
 
 По подразбиране атрибутите се сериализират с JDK сериализация. Тя работи с всичко `Serializable`, но е крехка: промяна на клас в нов деплой прави старите сесии нечетими и потребителите се разлогват. JSON е по-стабилен за собствените ти класове, но `SecurityContext` съдържа Security класове, за които Jackson трябва да има регистрирани модули.
 
-```java
+```java src/main/java/com/acme/shop/common/config/SessionSerializationConfig.java
+package com.acme.shop.common.config;
+
 @Configuration
 public class SessionSerializationConfig {
 
@@ -345,14 +349,14 @@ public class SessionSerializationConfig {
 
 Когато нямаш Redis, Postgres върши същата работа с малко по-висока латентност.
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.session</groupId>
     <artifactId>spring-session-jdbc</artifactId>
 </dependency>
 ```
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   session:
     timeout: 30m
@@ -369,8 +373,8 @@ spring:
 
 Функция "активни устройства" в профила и "излез от всички устройства" са директни операции върху `FindByIndexNameSessionRepository`.
 
-```java
-package com.example.orders.account;
+```java src/main/java/com/acme/shop/account/ActiveSessionService.java
+package com.acme.shop.account;
 
 import org.springframework.session.FindByIndexNameSessionRepository;
 import org.springframework.session.Session;
@@ -401,7 +405,9 @@ public class ActiveSessionService {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/account/ActiveSessionController.java
+package com.acme.shop.account;
+
 @RestController
 @RequestMapping("/api/account/sessions")
 public class ActiveSessionController {
@@ -441,7 +447,7 @@ Browser-ът праща cookie-то автоматично към всеки д�
 
 SPA не рендерира форми на сървъра, затова token-ът се подава като cookie `XSRF-TOKEN`, която JavaScript чете и праща обратно в header `X-XSRF-TOKEN`. Cookie-то трябва да е без `HttpOnly`, за да е четимо от JavaScript; това е безопасно, защото стойността ѝ сама по себе си не дава достъп, а само доказва, че кодът работи на нашия origin.
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 @Bean
 SecurityFilterChain web(HttpSecurity http) throws Exception {
     http
@@ -457,7 +463,9 @@ SecurityFilterChain web(HttpSecurity http) throws Exception {
 
 Security 6 въведе две тънкости. Първо, token-ът се зарежда лениво: `CsrfToken` е атрибут на заявката, но cookie-то се записва само когато някой извика `getToken()`. Затова е нужен малък filter, който го "докосва" на всяка заявка:
 
-```java
+```java src/main/java/com/acme/shop/common/config/CsrfCookieFilter.java
+package com.acme.shop.common.config;
+
 final class CsrfCookieFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
@@ -471,7 +479,9 @@ final class CsrfCookieFilter extends OncePerRequestFilter {
 
 Второ, default handler-ът е `XorCsrfTokenRequestAttributeHandler`, който връща различна, маскирана стойност при всяко четене (защита срещу BREACH). Маскираната стойност в cookie-то не може да се сравни директно, когато SPA я праща обратно в header. Препоръчаният от документацията handler маскира при рендериране и приема немаскирана стойност от header:
 
-```java
+```java src/main/java/com/acme/shop/common/config/SpaCsrfTokenRequestHandler.java
+package com.acme.shop.common.config;
+
 final class SpaCsrfTokenRequestHandler implements CsrfTokenRequestHandler {
     private final CsrfTokenRequestHandler plain = new CsrfTokenRequestAttributeHandler();
     private final CsrfTokenRequestHandler xor = new XorCsrfTokenRequestAttributeHandler();
@@ -502,7 +512,7 @@ CSRF се изключва само когато нищо в автентика�
 
 Remember-me дава дълъг login без да държиш сесия 30 дни. Persistent вариантът пази серия и token в база и ги ротира при всяка употреба, което позволява да се засече откраднат token.
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 .rememberMe(r -> r
     .rememberMeParameter("remember-me")
     .tokenRepository(persistentTokenRepository)
@@ -511,7 +521,7 @@ Remember-me дава дълъг login без да държиш сесия 30 д�
     .userDetailsService(userDetailsService))
 ```
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 @Bean
 PersistentTokenRepository persistentTokenRepository(DataSource dataSource) {
     var repo = new JdbcTokenRepositoryImpl();
@@ -520,7 +530,7 @@ PersistentTokenRepository persistentTokenRepository(DataSource dataSource) {
 }
 ```
 
-```sql
+```sql src/main/resources/db/migration/V20250201_0900__create_persistent_logins.sql
 create table persistent_logins (
     username  varchar(64) not null,
     series    varchar(64) primary key,
@@ -537,7 +547,7 @@ create table persistent_logins (
 
 `ResponseCookie` е builder за коректно форматиран `Set-Cookie` header, включително `SameSite`, който `jakarta.servlet.http.Cookie` не поддържа директно.
 
-```java
+```java src/main/java/com/acme/shop/user/PreferencesController.java
 @PutMapping("/api/preferences/theme")
 public ResponseEntity<Void> setTheme(@RequestBody ThemeRequest req) {
     var cookie = ResponseCookie.from("theme", req.theme())
@@ -564,7 +574,9 @@ public ThemeResponse theme(@CookieValue(name = "theme", defaultValue = "light") 
 
 `CookieLocaleResolver` чете езика от cookie и го дава на `LocaleContextHolder`, откъдето `MessageSource` и Thymeleaf го ползват. `LocaleChangeInterceptor` го сменя при параметър `?lang=bg`.
 
-```java
+```java src/main/java/com/acme/shop/common/config/LocaleConfig.java
+package com.acme.shop.common.config;
+
 @Configuration
 public class LocaleConfig implements WebMvcConfigurer {
 
@@ -591,7 +603,7 @@ public class LocaleConfig implements WebMvcConfigurer {
 
 SPA с JWT има проблем къде да пази refresh token-а: `localStorage` е четим от всеки XSS, а памет се губи при презареждане. Решението е access token в паметта на SPA-то (кратък, 5 до 15 минути) и refresh token в httpOnly cookie, ограничено до единствения path, който го ползва.
 
-```java
+```java src/main/java/com/acme/shop/auth/AuthController.java
 @PostMapping("/auth/login")
 public ResponseEntity<TokenResponse> login(@RequestBody LoginRequest req) {
     var tokens = authService.login(req.email(), req.password());
@@ -631,7 +643,7 @@ public ResponseEntity<TokenResponse> refresh(
 
 Nginx, Traefik или cloud load balancer терминира TLS и праща `http` към приложението. Три неща трябва да са наред:
 
-```yaml
+```yaml src/main/resources/application.yml
 server:
   forward-headers-strategy: framework
   servlet:
@@ -661,7 +673,9 @@ Proxy-то трябва да праща `X-Forwarded-Proto: https` и `X-Forward
 
 `MockMvc` поддържа сесия през `MockHttpSession`, която пренасяш между заявките. `spring-security-test` дава `formLogin()` и `user()` за автентикация без истински login.
 
-```java
+```java src/test/java/com/acme/shop/cart/CartSessionTest.java
+package com.acme.shop.cart;
+
 @SpringBootTest
 @AutoConfigureMockMvc
 class CartSessionTest {

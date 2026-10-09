@@ -21,7 +21,7 @@
 
 `RestClient` е в `spring-web`, тоест вече го имаш със `spring-boot-starter-web`. Останалото е по избор.
 
-```xml
+```xml pom.xml
 <!-- Apache HttpClient 5 за connection pooling, версията е от Boot -->
 <dependency>
     <groupId>org.apache.httpcomponents.client5</groupId>
@@ -43,7 +43,7 @@
 
 За OAuth2 към външни API добавяш `spring-boot-starter-oauth2-client`, за тестове `org.wiremock:wiremock-standalone` с `test` scope. От Boot 3.4 глобалните timeouts и типът request factory се задават със `spring.http.client.*`:
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   http:
     client:
@@ -60,8 +60,8 @@ payments:
 
 Един bean на външно API, построен от автоконфигурирания `RestClient.Builder`. Builder-ът е `prototype` scope, така че всяко инжектиране ти дава ново копие с вече закачени converters, observation и customizers.
 
-```java
-package com.example.orders.payments;
+```java src/main/java/com/acme/shop/common/http/PaymentsClientConfig.java
+package com.acme.shop.common.http;
 
 import org.springframework.web.client.RestClient;
 
@@ -81,8 +81,8 @@ class PaymentsClientConfig {
 }
 ```
 
-```java
-package com.example.orders.payments;
+```java src/main/java/com/acme/shop/payment/PaymentsClient.java
+package com.acme.shop.payment;
 
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
@@ -136,7 +136,7 @@ record PaymentDto(String id, long orderId, long amountMinor, String currency, St
 
 Глобалните `spring.http.client.connect-timeout` и `read-timeout` се прилагат върху автоконфигурирания builder. Когато един API има нужда от различни стойности, ги задаваш програмно с `ClientHttpRequestFactorySettings` и `ClientHttpRequestFactoryBuilder` (Boot 3.4+):
 
-```java
+```java src/main/java/com/acme/shop/common/http/PaymentsClientConfig.java
 import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
 import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 
@@ -164,7 +164,7 @@ RestClient paymentsRestClient(RestClient.Builder builder,
 
 Най-чистият модел: HTTP статусите се превеждат в domain exceptions още в клиента, така че сървисът над него не знае нищо за HTTP.
 
-```java
+```java src/main/java/com/acme/shop/payment/PaymentsClient.java
 import org.springframework.http.HttpStatusCode;
 
 public PaymentDto get(String paymentId) {
@@ -202,7 +202,9 @@ flowchart LR
     G -->|"response"| F
 ```
 
-```java
+```java src/main/java/com/acme/shop/common/http/OutboundLoggingInterceptor.java
+package com.acme.shop.common.http;
+
 import org.springframework.http.HttpRequest;
 import org.springframework.http.client.ClientHttpRequestExecution;
 import org.springframework.http.client.ClientHttpRequestInterceptor;
@@ -233,8 +235,8 @@ public class OutboundLoggingInterceptor implements ClientHttpRequestInterceptor 
 
 Когато клиентът порасне, fluent кодът се повтаря. `@HttpExchange` интерфейсите го свиват до сигнатури, а Spring генерира proxy върху твоя `RestClient`.
 
-```java
-package com.example.orders.payments;
+```java src/main/java/com/acme/shop/payment/PaymentsApi.java
+package com.acme.shop.payment;
 
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -261,7 +263,9 @@ public interface PaymentsApi {
 
 Един конфигурационен клас създава всички proxy-та:
 
-```java
+```java src/main/java/com/acme/shop/common/http/HttpInterfacesConfig.java
+package com.acme.shop.common.http;
+
 import org.springframework.web.client.support.RestClientAdapter;
 import org.springframework.web.service.invoker.HttpServiceProxyFactory;
 
@@ -294,7 +298,9 @@ class HttpInterfacesConfig {
 
 Ако екипът вече е на Spring Cloud и Feign, няма смисъл да мигрираш. За нов сървис без Spring Cloud `@HttpExchange` е по-малко магия и една зависимост по-малко.
 
-```java
+```java src/main/java/com/acme/shop/payment/PaymentsFeignClient.java
+package com.acme.shop.payment;
+
 @FeignClient(name = "payments", url = "${payments.base-url}", configuration = PaymentsFeignConfig.class)
 public interface PaymentsFeignClient {
 
@@ -334,7 +340,7 @@ public RateDto latest(String currency) {
 
 Apache HttpClient 5 с pool: едни и същи TCP връзки се преизползват (keep-alive), а `maxPerRoute` ограничава колко едновременни връзки отваряш към един host, което защитава и теб, и отсрещното API.
 
-```java
+```java src/main/java/com/acme/shop/common/http/HttpClientConfig.java
 import org.apache.hc.client5.http.config.ConnectionConfig;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
@@ -374,7 +380,7 @@ HttpComponentsClientHttpRequestFactory pooledRequestFactory() {
 
 Когато външното API изисква OAuth2 token, Spring Security ти дава `OAuth2AuthorizedClientManager`, който взима token, кешира го и го подновява преди изтичане. Не пиши сам логика за refresh.
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   security:
     oauth2:
@@ -390,7 +396,9 @@ spring:
             token-uri: https://auth.payments.example.com/oauth2/token
 ```
 
-```java
+```java src/main/java/com/acme/shop/common/http/OAuth2ClientConfig.java
+package com.acme.shop.common.http;
+
 import org.springframework.security.oauth2.client.AuthorizedClientServiceOAuth2AuthorizedClientManager;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClientManager;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClientProviderBuilder;
@@ -413,7 +421,9 @@ class OAuth2ClientConfig {
 
 `AuthorizedClientServiceOAuth2AuthorizedClientManager` работи извън HTTP request (scheduled jobs, Kafka listeners), за разлика от `DefaultOAuth2AuthorizedClientManager`, който очаква `HttpServletRequest`. За сървис към сървис това е правилният избор. Interceptor, който добавя token-а:
 
-```java
+```java src/main/java/com/acme/shop/common/http/OAuth2ClientCredentialsInterceptor.java
+package com.acme.shop.common.http;
+
 import org.springframework.security.oauth2.client.OAuth2AuthorizeRequest;
 
 public class OAuth2ClientCredentialsInterceptor implements ClientHttpRequestInterceptor {
@@ -457,7 +467,7 @@ public class OAuth2ClientCredentialsInterceptor implements ClientHttpRequestInte
 | `@Bulkhead` | изчерпване на threads от един бавен API | `max-concurrent-calls` |
 | `@RateLimiter` | превишаване на квотата на отсрещното API | `limit-for-period`, `limit-refresh-period` |
 
-```java
+```java src/main/java/com/acme/shop/payment/PaymentsClient.java
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
@@ -474,7 +484,7 @@ PaymentDto getFallback(String paymentId, CallNotPermittedException e) {
 }
 ```
 
-```yaml
+```yaml src/main/resources/application.yml
 resilience4j:
   retry:
     instances:
@@ -486,10 +496,10 @@ resilience4j:
         enable-randomized-wait: true
         randomized-wait-factor: 0.5
         retry-exceptions:
-          - com.example.orders.payments.PaymentGatewayUnavailableException
+          - com.acme.shop.payment.PaymentGatewayUnavailableException
         ignore-exceptions:
-          - com.example.orders.payments.PaymentRejectedException
-          - com.example.orders.payments.PaymentNotFoundException
+          - com.acme.shop.payment.PaymentRejectedException
+          - com.acme.shop.payment.PaymentNotFoundException
   circuitbreaker:
     instances:
       payments:
@@ -499,7 +509,7 @@ resilience4j:
         wait-duration-in-open-state: 30s
         permitted-number-of-calls-in-half-open-state: 3
         record-exceptions:
-          - com.example.orders.payments.PaymentGatewayUnavailableException
+          - com.acme.shop.payment.PaymentGatewayUnavailableException
         register-health-indicator: true
   timelimiter:
     instances:
@@ -552,7 +562,7 @@ Retry е безопасен само ако повторението не при
 
 Агрегиране на данни от три API за една страница: последователно е 3 пъти по-бавно от нужното. С виртуални нишки най-простият вариант е executor с виртуална нишка на задача и `CompletableFuture`:
 
-```java
+```java src/main/java/com/acme/shop/order/OrderSummaryService.java
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 
@@ -574,7 +584,7 @@ public OrderSummary summary(long orderId) {
 
 Обхождане на cursor pagination на външно API:
 
-```java
+```java src/main/java/com/acme/shop/payment/PaymentsClient.java
 public List<PaymentDto> allForCustomer(String customerId) {
     var result = new ArrayList<PaymentDto>();
     String cursor = null;
@@ -601,7 +611,7 @@ record PageDto(List<PaymentDto> items, String nextCursor) {}
 
 `retrieve().body(byte[].class)` чете всичко в памет. За файлове ползвай `exchange()`, който ти дава суровия отговор и `InputStream`:
 
-```java
+```java src/main/java/com/acme/shop/payment/PaymentsClient.java
 public void downloadInvoicePdf(String invoiceId, Path target) {
     client.get()
             .uri("/invoices/{id}/pdf", invoiceId)
@@ -623,7 +633,9 @@ public void downloadInvoicePdf(String invoiceId, Path target) {
 
 Webhook е външният сървис, който вика теб. Три правила: верифицирай подписа, отговаряй бързо с 2xx, обработвай идемпотентно, защото доставчиците retry-ват при всеки timeout.
 
-```java
+```java src/main/java/com/acme/shop/payment/PaymentWebhookController.java
+package com.acme.shop.payment;
+
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.security.MessageDigest;
@@ -681,7 +693,9 @@ class PaymentWebhookController {
 
 Slice тест, който вдига само клиента и подменя мрежата с mock сървър:
 
-```java
+```java src/test/java/com/acme/shop/payment/PaymentsClientTest.java
+package com.acme.shop.payment;
+
 import org.springframework.boot.test.autoconfigure.web.client.RestClientTest;
 import org.springframework.test.web.client.MockRestServiceServer;
 
@@ -725,8 +739,8 @@ WireMock е реален HTTP сървър в теста и тества цел�
 
 Всичко от документа в един клиент: timeouts, pool, auth, error mapping, idempotency, retry и circuit breaker.
 
-```java
-package com.example.orders.payments;
+```java src/main/java/com/acme/shop/payment/PaymentGatewayClient.java
+package com.acme.shop.payment;
 
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
@@ -782,7 +796,9 @@ Exception класовете са обикновени `RuntimeException` с к�
 
 Bean-ът `paymentsRestClient` е този от раздел 3 с `requestFactory(pooledRequestFactory)` от раздел 9 и двата interceptor-а `OAuth2ClientCredentialsInterceptor` и `OutboundLoggingInterceptor`. Resilience4j yaml-ът от раздел 11 с добавена `PaymentDeclinedException` в `ignore-exceptions` на retry и на circuit breaker-а. Тестът с WireMock проверява retry, идемпотентния header и circuit breaker-а:
 
-```java
+```java src/test/java/com/acme/shop/payment/PaymentGatewayClientTest.java
+package com.acme.shop.payment;
+
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;

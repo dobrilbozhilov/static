@@ -16,7 +16,7 @@ Authorization е въпросът "може ли този потребител �
 
 Authorization идва със същия starter като автентикацията. За method security не трябва нищо допълнително, само анотацията `@EnableMethodSecurity`. За зареждане на роли от базата ти трябва JPA, за JWT claims ти трябва resource server.
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-security</artifactId>
@@ -37,7 +37,7 @@ Authorization идва със същия starter като автентикаци
 </dependency>
 ```
 
-```yaml
+```yaml src/main/resources/application-dev.yml
 logging:
   level:
     org.springframework.security.authorization: DEBUG
@@ -121,8 +121,8 @@ flowchart LR
 
 Един `SecurityFilterChain` с URL правила, един service с `@PreAuthorize` и bean за ownership. Това покрива 80 процента от нуждите на типичен API.
 
-```java
-package com.example.orders.security;
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
+package com.acme.shop.common.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -157,8 +157,8 @@ public class SecurityConfig {
 
 Редът на matchers има значение: Spring взима първия, който съвпада, и спира. Затова по-специфичните пътища стоят отгоре, а `anyRequest()` е винаги последен. Ако сложиш `anyRequest().authenticated()` преди `permitAll()` правилата, те никога няма да се изпълнят, а Security 6 ще хвърли грешка при стартиране, защото открива недостижим matcher.
 
-```java
-package com.example.orders.order;
+```java src/main/java/com/acme/shop/order/OrderService.java
+package com.acme.shop.order;
 
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
@@ -195,8 +195,8 @@ public class OrderService {
 }
 ```
 
-```java
-package com.example.orders.security;
+```java src/main/java/com/acme/shop/order/OrderSecurity.java
+package com.acme.shop.order;
 
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
@@ -243,7 +243,7 @@ Content-Type: application/problem+json
 
 `requestMatchers(String...)` в Boot 3.5 ползва `PathPatternRequestMatcher` за MVC приложения, така че синтаксисът е същият като в `@RequestMapping`: `**` за много сегменти, `{id}` за променлива. Ако имаш и MVC, и други servlets на различни пътища, Security изисква явен избор на matcher тип; при чисто MVC приложение не мислиш за това.
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 .authorizeHttpRequests(a -> a
     .requestMatchers(HttpMethod.GET, "/api/orders/{id}").hasAnyAuthority("order:read", "order:write")
     .requestMatchers(HttpMethod.PUT, "/api/orders/{id}/status").hasAuthority("order:manage")
@@ -273,7 +273,7 @@ Content-Type: application/problem+json
 | `@PreFilter` | филтрира колекция в аргумент | batch операция, в която потребителят подава списък от id |
 | `@PostFilter` | филтрира върната колекция | малки списъци; за големи ползвай WHERE в заявката |
 
-```java
+```java src/main/java/com/acme/shop/order/OrderService.java
 @PostAuthorize("returnObject.ownerEmail == authentication.name or hasRole('ADMIN')")
 public Order loadForEdit(Long id) {
     return orders.findById(id).orElseThrow();
@@ -306,8 +306,8 @@ public List<Order> recent() {
 
 Когато ownership проверката се повтаря за няколко типа entity, `hasPermission` дава единен вход. Трябват ти два bean-а: evaluator и expression handler, който го ползва.
 
-```java
-package com.example.orders.security;
+```java src/main/java/com/acme/shop/common/security/DomainPermissionEvaluator.java
+package com.acme.shop.common.security;
 
 import java.io.Serializable;
 import org.springframework.security.access.PermissionEvaluator;
@@ -356,8 +356,8 @@ public class DomainPermissionEvaluator implements PermissionEvaluator {
 }
 ```
 
-```java
-package com.example.orders.security;
+```java src/main/java/com/acme/shop/common/config/MethodSecurityConfig.java
+package com.acme.shop.common.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -383,8 +383,8 @@ public class MethodSecurityConfig {
 
 От Security 6 всяко решение минава през `AuthorizationManager<T>`. За URL `T` е `RequestAuthorizationContext`, за методи е `MethodInvocation`. Ако нито SpEL, нито `PermissionEvaluator` описват правилото ти, пишеш собствен manager.
 
-```java
-package com.example.orders.security;
+```java src/main/java/com/acme/shop/common/security/BusinessHoursAuthorizationManager.java
+package com.acme.shop.common.security;
 
 import java.util.function.Supplier;
 import org.springframework.security.authorization.AuthorizationDecision;
@@ -414,7 +414,7 @@ public class BusinessHoursAuthorizationManager
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 .authorizeHttpRequests(a -> a
     .requestMatchers("/api/payouts/**").access(new BusinessHoursAuthorizationManager(clock))
     .anyRequest().authenticated())
@@ -428,8 +428,8 @@ public class BusinessHoursAuthorizationManager
 
 При локална автентикация (парола, сесия) правата се четат при login и се слагат в `UserDetails`. С модела от ER диаграмата:
 
-```java
-package com.example.orders.user;
+```java src/main/java/com/acme/shop/user/
+package com.acme.shop.user;
 
 import jakarta.persistence.*;
 import java.util.HashSet;
@@ -476,8 +476,8 @@ public class Permission {
 
 EAGER тук е оправдан: ролите са малко, трябват при всеки login и нищо друго не ги зарежда. За другите релации в приложението правилото остава LAZY, както е описано в [Релации](Relations.md).
 
-```java
-package com.example.orders.security;
+```java src/main/java/com/acme/shop/user/JpaUserDetailsService.java
+package com.acme.shop.user;
 
 import java.util.stream.Stream;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -525,8 +525,8 @@ public class JpaUserDetailsService implements UserDetailsService {
 
 При resource server правата идват от token-а. По подразбиране `JwtAuthenticationConverter` чете claim `scope` или `scp` и слага префикс `SCOPE_`. Ако identity provider-ът ти издава claim `roles`, пренастройваш конвертера:
 
-```java
-package com.example.orders.security;
+```java src/main/java/com/acme/shop/common/config/JwtAuthoritiesConfig.java
+package com.acme.shop.common.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -564,7 +564,7 @@ Boot автоматично подава този bean на `oauth2ResourceServe
 
 Без йерархия `hasRole('USER')` отхвърля admin, който няма изрично `ROLE_USER`. `RoleHierarchy` bean решава това и се прилага автоматично и в URL правила, и в method security.
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 @Bean
 static RoleHierarchy roleHierarchy() {
     return RoleHierarchyImpl.withDefaultRolePrefix()
@@ -582,7 +582,7 @@ static RoleHierarchy roleHierarchy() {
 
 `@PreAuthorize` с bean проверка прави една допълнителна заявка само за да провери собственика. Когато методът така или иначе зарежда поръчката, по-евтино е проверката да е в самия метод. Хвърлената `AccessDeniedException` се превръща в 403 от `@RestControllerAdvice` в [Грешки и ProblemDetail](Exception_Handling.md).
 
-```java
+```java src/main/java/com/acme/shop/order/OrderService.java
 import org.springframework.security.access.AccessDeniedException;
 
 @Transactional
@@ -598,7 +598,9 @@ public void cancel(Long id, CurrentUser current) {
 
 Важна подробност: при `GET /api/orders/{id}` на чужда поръчка често е по-правилно да върнеш 404, а не 403, за да не потвърждаваш, че поръчката съществува. Решението е по домейн, но бъди последователен в целия сървис.
 
-```java
+```java src/main/java/com/acme/shop/common/security/CurrentUser.java
+package com.acme.shop.common.security;
+
 public record CurrentUser(String email, Long tenantId, Set<String> authorities) {
     public boolean isAdmin() {
         return authorities.contains("ROLE_ADMIN");
@@ -620,8 +622,8 @@ public record CurrentUser(String email, Long tenantId, Set<String> authorities) 
 
 В multi-tenant SaaS с общи таблици всяка таблица има `tenant_id`, а всяка заявка трябва да филтрира по него. Да го пишеш ръчно във всеки repository метод е сигурен начин да го забравиш. Hibernate `@Filter` го добавя автоматично към всеки SELECT за entity-та с анотацията, веднъж активиран за текущата session.
 
-```java
-package com.example.orders.order;
+```java src/main/java/com/acme/shop/order/Order.java
+package com.acme.shop.order;
 
 import jakarta.persistence.*;
 import org.hibernate.annotations.Filter;
@@ -643,8 +645,8 @@ public class Order {
 
 Филтърът се активира за всяка заявка, преди да започне работата с базата. Най-надеждното място е aspect около transactional service методите или `HandlerInterceptor`, който чете `TenantContext`.
 
-```java
-package com.example.orders.tenant;
+```java src/main/java/com/acme/shop/common/security/TenantContext.java
+package com.acme.shop.common.security;
 
 public final class TenantContext {
     private static final ThreadLocal<Long> CURRENT = new ThreadLocal<>();
@@ -655,8 +657,8 @@ public final class TenantContext {
 }
 ```
 
-```java
-package com.example.orders.tenant;
+```java src/main/java/com/acme/shop/common/security/TenantFilterAspect.java
+package com.acme.shop.common.security;
 
 import jakarta.persistence.EntityManager;
 import org.aspectj.lang.ProceedingJoinPoint;
@@ -696,7 +698,9 @@ public class TenantFilterAspect {
 
 По-прост вариант без Hibernate filter е repository, в който няма метод без tenant аргумент:
 
-```java
+```java src/main/java/com/acme/shop/order/OrderRepository.java
+package com.acme.shop.order;
+
 public interface OrderRepository extends JpaRepository<Order, Long> {
     Optional<Order> findByIdAndTenantId(Long id, Long tenantId);
     Page<Order> findAllByTenantIdAndOwnerEmail(Long tenantId, String ownerEmail, Pageable pageable);
@@ -716,11 +720,17 @@ Support екипът често иска "да види приложението
 
 Един `OrderResponse` може да връща `internalMargin` само на admin. `@JsonView` маркира полетата, а controller-ът избира view според ролята. Подробности за mapping-а в [DTO и mapping](DTO_Mapping.md).
 
-```java
+```java src/main/java/com/acme/shop/common/web/Views.java
+package com.acme.shop.common.web;
+
 public class Views {
     public interface Customer {}
     public interface Admin extends Customer {}
 }
+```
+
+```java src/main/java/com/acme/shop/order/dto/OrderResponse.java
+package com.acme.shop.order.dto;
 
 public record OrderResponse(
     @JsonView(Views.Customer.class) Long id,
@@ -728,7 +738,7 @@ public record OrderResponse(
     @JsonView(Views.Admin.class) BigDecimal internalMargin) {}
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @GetMapping("/{id}")
 public MappingJacksonValue get(@PathVariable Long id, Authentication auth) {
     var body = new MappingJacksonValue(orderService.get(id));
@@ -743,14 +753,16 @@ public MappingJacksonValue get(@PathVariable Long id, Authentication auth) {
 
 Security 6 публикува `AuthorizationDeniedEvent` за всеки отказ, стига да има регистриран `AuthorizationEventPublisher`. Това е най-евтиният audit за "кой се опита да направи какво".
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 @Bean
 AuthorizationEventPublisher authorizationEventPublisher(ApplicationEventPublisher publisher) {
     return new SpringAuthorizationEventPublisher(publisher);
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/common/security/DeniedAccessAuditor.java
+package com.acme.shop.common.security;
+
 @Component
 public class DeniedAccessAuditor {
 
@@ -773,8 +785,8 @@ public class DeniedAccessAuditor {
 
 `@WithMockUser` създава `Authentication` в контекста за времето на теста. Зареждаш само service слоя и method security, не целия MVC.
 
-```java
-package com.example.orders.order;
+```java src/test/java/com/acme/shop/order/OrderServiceAuthorizationTest.java
+package com.acme.shop.order;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import org.junit.jupiter.api.Test;
@@ -822,7 +834,9 @@ class OrderServiceAuthorizationTest {
 
 ### URL правила с MockMvc
 
-```java
+```java src/test/java/com/acme/shop/order/OrderControllerSecurityTest.java
+package com.acme.shop.order;
+
 @WebMvcTest(OrderController.class)
 @Import(SecurityConfig.class)
 class OrderControllerSecurityTest {

@@ -15,7 +15,7 @@ Pagination е начинът всеки списък в API-то (поръчки
 
 Pagination идва със Spring Data JPA, нищо допълнително не е нужно. Настройките долу определят параметрите по подразбиране и ограничават максималния размер на страницата, което е единствената защита срещу `?size=1000000`.
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-data-jpa</artifactId>
@@ -26,7 +26,7 @@ Pagination идва със Spring Data JPA, нищо допълнително н
 </dependency>
 ```
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   data:
     web:
@@ -47,7 +47,9 @@ spring:
 
 Repository методът приема `Pageable` и връща `Page<Order>`. Spring Data генерира две заявки: `SELECT ... LIMIT 20 OFFSET 40` и `SELECT count(*) ...`.
 
-```java
+```java src/main/java/com/acme/shop/order/OrderRepository.java
+package com.acme.shop.order;
+
 public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     Page<Order> findByCustomerId(UUID customerId, Pageable pageable);
@@ -56,8 +58,8 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
 Controller-ът получава `Pageable` автоматично от query параметрите, защото Spring Boot регистрира `PageableHandlerMethodArgumentResolver`. `@PageableDefault` задава стойностите, когато клиентът не подаде нищо.
 
-```java
-package com.example.shop.order.web;
+```java src/main/java/com/acme/shop/order/OrderController.java
+package com.acme.shop.order;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -84,8 +86,8 @@ public class OrderController {
 }
 ```
 
-```java
-package com.example.shop.order;
+```java src/main/java/com/acme/shop/order/OrderQueryService.java
+package com.acme.shop.order;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -150,7 +152,7 @@ Pageable next = first.next();
 
 `count(*)` върху таблица с милиони редове и WHERE по не-индексирана колона е най-бавната част от страницата. Spring Data е умен в един случай: ако първата страница съдържа по-малко от `size` елемента, не прави count заявка. Във всеки друг случай тя се изпълнява. Ако потребителят никога не вижда "страница 68 от 68", не плащай за това: върни `Slice`.
 
-```java
+```java src/main/java/com/acme/shop/order/OrderRepository.java
 Slice<Order> findByStatus(OrderStatus status, Pageable pageable);
 ```
 
@@ -163,8 +165,8 @@ Slice<Order> findByStatus(OrderStatus status, Pageable pageable);
 1. `spring.data.web.pageable.serialization-mode: via_dto` (Boot 3.3+): Spring Data сериализира `Page` през `PagedModel` с плосък формат `{content, page: {size, number, totalElements, totalPages}}`. Бързо решение, но форматът пак не е твой.
 2. Собствен `PageResponse<T>` record: ти определяш контракта и той не се променя при upgrade. Това е препоръката.
 
-```java
-package com.example.shop.common.web;
+```java src/main/java/com/acme/shop/common/web/
+package com.acme.shop.common.web;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Slice;
@@ -210,8 +212,8 @@ public record SliceResponse<T>(List<T> content, int page, int size, boolean hasN
 
 ### Whitelist с enum и mapping към entity property
 
-```java
-package com.example.shop.order.web;
+```java src/main/java/com/acme/shop/order/OrderSortField.java
+package com.acme.shop.order;
 
 import org.springframework.data.domain.Sort;
 
@@ -243,8 +245,8 @@ public enum OrderSortField {
 }
 ```
 
-```java
-package com.example.shop.common.web;
+```java src/main/java/com/acme/shop/common/web/SafePageable.java
+package com.acme.shop.common.web;
 
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -269,7 +271,7 @@ public final class SafePageable {
 
 В сървиса:
 
-```java
+```java src/main/java/com/acme/shop/order/OrderQueryService.java
 public PageResponse<OrderSummary> list(UUID customerId, Pageable incoming) {
     Pageable pageable = SafePageable.of(incoming, name -> OrderSortField.fromApiName(name).property());
     ...
@@ -288,12 +290,14 @@ public PageResponse<OrderSummary> list(UUID customerId, Pageable incoming) {
 
 Когато търсенето има много незадължителни критерии (статус, период, клиент, минимална сума), `Specification` е най-четимият начин да ги композираш, а `JpaSpecificationExecutor.findAll(spec, pageable)` връща `Page` с автоматичен count. Подробности за Specification има в [База данни и ORM](Database_ORM.md).
 
-```java
+```java src/main/java/com/acme/shop/order/OrderRepository.java
+package com.acme.shop.order;
+
 public interface OrderRepository extends JpaRepository<Order, UUID>, JpaSpecificationExecutor<Order> {}
 ```
 
-```java
-package com.example.shop.order;
+```java src/main/java/com/acme/shop/order/OrderSpecs.java
+package com.acme.shop.order;
 
 import org.springframework.data.jpa.domain.Specification;
 
@@ -328,7 +332,7 @@ public final class OrderSpecs {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/
 public record OrderFilter(OrderStatus status, UUID customerId, Instant from, Instant to, BigDecimal minTotal) {}
 
 public PageResponse<OrderSummary> search(OrderFilter f, Pageable pageable) {
@@ -349,7 +353,9 @@ Specification, която връща `null`, се пропуска от `allOf`,
 
 Решението е двустъпково: първо страница само от id-та (евтино, с count), после `JOIN FETCH` по тези id-та, като редът се възстановява в Java, защото `IN (...)` не пази реда.
 
-```java
+```java src/main/java/com/acme/shop/order/OrderRepository.java
+package com.acme.shop.order;
+
 public interface OrderRepository extends JpaRepository<Order, UUID>, JpaSpecificationExecutor<Order> {
 
     @Query(value = "SELECT o.id FROM Order o WHERE o.customer.id = :customerId",
@@ -361,7 +367,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID>, JpaSpecific
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/OrderQueryService.java
 public PageResponse<OrderDetails> listWithLines(UUID customerId, Pageable pageable) {
     Page<UUID> idPage = orders.findIdsByCustomer(customerId, pageable);
     Map<UUID, Order> byId = orders.findWithLinesByIdIn(idPage.getContent()).stream()
@@ -416,8 +422,8 @@ LIMIT :limit;
 
 Клиентът не трябва да знае какво има в cursor-а, затова го кодираме в непрозрачен string. Base64 върху `createdAt|id` е достатъчно; ако искаш да не може да се подправя, добави HMAC, но за списък от поръчки, който и без това е филтриран по текущия потребител, не е нужно.
 
-```java
-package com.example.shop.common.web;
+```java src/main/java/com/acme/shop/common/web/OrderCursor.java
+package com.acme.shop.common.web;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -447,7 +453,9 @@ public record OrderCursor(Instant createdAt, UUID id) {
 
 JPQL не поддържа row comparison, затова го разписваме като еквивалентния `OR` израз или ползваме native query. Native е по-четим и използва индекса по-предвидимо:
 
-```java
+```java src/main/java/com/acme/shop/order/OrderRepository.java
+package com.acme.shop.order;
+
 public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     @Query(value = """
@@ -474,9 +482,13 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
 Сървисът иска `limit + 1` реда, за да знае дали има следваща страница без count:
 
-```java
-public record CursorResponse<T>(List<T> items, String nextCursor) {}
+```java src/main/java/com/acme/shop/common/web/CursorResponse.java
+package com.acme.shop.common.web;
 
+public record CursorResponse<T>(List<T> items, String nextCursor) {}
+```
+
+```java src/main/java/com/acme/shop/order/OrderQueryService.java
 public CursorResponse<OrderSummary> feed(UUID customerId, String cursor, int size) {
     int limit = Math.min(size, 100);
     List<Order> rows = cursor == null
@@ -514,7 +526,9 @@ GET /api/orders/feed?size=20&cursor=MjAyNi0xMC0wMVQwOToxMjowMFp8N2EyZi4uLg HTTP/
 
 За отчетни заявки или проекции без entity `JdbcClient` е по-прост и по-бърз:
 
-```java
+```java src/main/java/com/acme/shop/order/OrderFeedDao.java
+package com.acme.shop.order;
+
 @Repository
 public class OrderFeedDao {
 
@@ -553,14 +567,16 @@ public class OrderFeedDao {
 
 Spring Data JPA 3.1 добави `ScrollPosition`, `Window<T>` и `WindowIterator`, които правят keyset pagination без ръчен SQL. Repository методът приема `ScrollPosition` и `Limit`, а сортирането идва от името на метода или от `Sort`. Spring Data сам добавя id към сортирането за стабилност и генерира `WHERE` по keyset-а.
 
-```java
+```java src/main/java/com/acme/shop/order/OrderRepository.java
+package com.acme.shop.order;
+
 public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     Window<Order> findByCustomerIdOrderByCreatedAtDescIdDesc(UUID customerId, ScrollPosition position, Limit limit);
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/OrderQueryService.java
 import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.ScrollPosition;
 import org.springframework.data.domain.Window;
@@ -597,7 +613,7 @@ Scroll API-то с `ScrollPosition.offset()` прави и offset pagination с�
 
 За `@Query` с JOIN-ове Spring Data генерира count чрез пренаписване на select-а, което често е грешно или бавно (брои редове от JOIN-а, не поръчки). Винаги задавай `countQuery` явно за нетривиални заявки:
 
-```java
+```java src/main/java/com/acme/shop/order/OrderRepository.java
 @Query(value = """
         SELECT o FROM Order o
         JOIN o.customer c
@@ -617,7 +633,7 @@ Page<Order> findByCountryAndStatus(@Param("country") String country,
 
 Когато таблицата е 50 милиона реда и UI-ят показва само "около 48 млн. резултата", точният count е загуба. PostgreSQL пази статистика в `pg_class.reltuples`, обновявана от `ANALYZE`:
 
-```java
+```java src/main/java/com/acme/shop/order/OrderFeedDao.java
 public long estimatedRowCount(String table) {
     return jdbc.sql("SELECT reltuples::bigint FROM pg_class WHERE relname = :table")
             .param("table", table)
@@ -647,7 +663,7 @@ public long estimatedRowCount(String table) {
 
 Всяка колона, по която позволяваш сортиране, трябва да е покрита от индекс в комбинация с най-честия филтър, иначе PostgreSQL сортира в паметта или на диск. За offset pagination с филтър по клиент и сортиране по дата:
 
-```sql
+```sql src/main/resources/db/migration/V20250115_0900__add_order_sort_indexes.sql
 CREATE INDEX idx_orders_customer_created ON orders (customer_id, created_at DESC, id DESC);
 CREATE INDEX idx_orders_status_created ON orders (status, created_at DESC, id DESC);
 ```
@@ -660,7 +676,9 @@ CREATE INDEX idx_orders_status_created ON orders (status, created_at DESC, id DE
 
 `@WebMvcTest` зарежда `PageableHandlerMethodArgumentResolver`, така че параметрите се парсват както в production. Сервизът се mock-ва и се проверява какъв `Pageable` е получил.
 
-```java
+```java src/test/java/com/acme/shop/order/OrderControllerPaginationTest.java
+package com.acme.shop.order;
+
 @WebMvcTest(OrderController.class)
 class OrderControllerPaginationTest {
 
@@ -698,7 +716,7 @@ class OrderControllerPaginationTest {
 
 Keyset логиката се тества срещу реален PostgreSQL с Testcontainers, защото row comparison и `LIMIT` в H2 се държат различно. Създаваш 25 поръчки с различни `created_at`, листиш по 10 и проверяваш, че трите страници покриват всичките 25 без дубликат и в правилния ред. Два реда с еднакъв `created_at` са задължителен случай в теста, защото точно там offset и неправилен keyset се чупят. Виж [Testing](Testing.md) за настройката на контейнера.
 
-```java
+```java src/test/java/com/acme/shop/order/OrderQueryServiceIT.java
 @Test
 void keysetPagesCoverAllRowsWithoutDuplicates() {
     Set<UUID> seen = new HashSet<>();

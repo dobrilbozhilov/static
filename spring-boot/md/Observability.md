@@ -14,7 +14,7 @@ Observability е способността да разбереш какво пр�
 
 ## 1. Зависимости и настройка
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-actuator</artifactId>
@@ -52,7 +52,7 @@ Observability е способността да разбереш какво пр�
 
 Всички Micrometer и OpenTelemetry версии се управляват от `spring-boot-starter-parent`, не им пиши `<version>`. Минимална конфигурация:
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   application:
     name: orders
@@ -134,7 +134,7 @@ http_server_requests_seconds_count{application="orders",method="GET",status="200
 
 ### Отделен management порт
 
-```yaml
+```yaml src/main/resources/application.yml
 management:
   server:
     port: 9090
@@ -146,7 +146,7 @@ Actuator вече е на друг порт, който не се експони
 
 ### Security за Actuator
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 import org.springframework.boot.actuate.autoconfigure.security.servlet.EndpointRequest;
 
 @Bean
@@ -177,7 +177,7 @@ Kubernetes задава два въпроса. Liveness: "процесът жи�
 | `/actuator/health/liveness` | само `livenessState` | application context е счупен | рестартира pod-а |
 | `/actuator/health/readiness` | `readinessState` + каквото добавиш | стартира, спира, DB недостъпна | спира трафика към pod-а |
 
-```yaml
+```yaml src/main/resources/application.yml
 management:
   endpoint:
     health:
@@ -198,8 +198,8 @@ management:
 
 Health се вика на всеки 10 секунди от Kubernetes и на всеки scrape от Prometheus. Индикатор, който прави HTTP call към външен сървис при всяко викане, превръща health-а в DDoS срещу партньора. Кеширай резултата:
 
-```java
-package com.example.orders.health;
+```java src/main/java/com/acme/shop/common/observability/PaymentGatewayHealthIndicator.java
+package com.acme.shop.common.observability;
 
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
@@ -240,7 +240,7 @@ public class PaymentGatewayHealthIndicator implements HealthIndicator {
 
 ### Kubernetes
 
-```yaml
+```yaml k8s/deployment.yaml
 livenessProbe:
   httpGet:
     path: /actuator/health/liveness
@@ -261,7 +261,7 @@ readinessProbe:
 
 `/actuator/info` отговаря на въпроса "коя версия върти този pod". Build info идва от Maven plugin-а, git info от `git-commit-id-maven-plugin`:
 
-```xml
+```xml pom.xml
 <plugin>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-maven-plugin</artifactId>
@@ -280,7 +280,7 @@ readinessProbe:
 </plugin>
 ```
 
-```yaml
+```yaml src/main/resources/application.yml
 management:
   info:
     git:
@@ -318,8 +318,8 @@ Tag-овете са измеренията, по които групираш в 
 
 ### Бизнес метрики
 
-```java
-package com.example.orders.service;
+```java src/main/java/com/acme/shop/order/OrderService.java
+package com.acme.shop.order;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -373,7 +373,7 @@ public class OrderService {
 
 `Gauge` е за моментна стойност, която се чете при scrape, не се инкрементира. Класическият пример е размер на опашка:
 
-```java
+```java src/main/java/com/acme/shop/order/OrderService.java
 Gauge.builder("orders.pending", orders, repo -> repo.countByStatus(OrderStatus.PENDING))
         .description("Orders waiting for payment")
         .register(registry);
@@ -383,7 +383,7 @@ Lambda-та се изпълнява при всеки scrape, затова тр�
 
 ### @Timed и @Counted
 
-```java
+```java src/main/java/com/acme/shop/common/observability/ObservabilityConfig.java
 @Bean
 TimedAspect timedAspect(MeterRegistry registry) {
     return new TimedAspect(registry);
@@ -395,7 +395,7 @@ CountedAspect countedAspect(MeterRegistry registry) {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/invoice/InvoiceService.java
 @Timed(value = "invoices.generate", percentiles = {0.5, 0.95, 0.99})
 public Invoice generate(Order order) { ... }
 
@@ -407,7 +407,7 @@ public void email(Invoice invoice) { ... }
 
 ### Percentiles и histograms
 
-```yaml
+```yaml src/main/resources/application.yml
 management:
   metrics:
     distribution:
@@ -424,7 +424,7 @@ management:
 
 ### Scrape
 
-```yaml
+```yaml observability/prometheus.yml
 # prometheus.yml
 scrape_configs:
   - job_name: orders
@@ -460,7 +460,7 @@ histogram_quantile(0.99,
 
 ### Alert-и
 
-```yaml
+```yaml observability/alerts.yml
 groups:
   - name: orders
     rules:
@@ -522,7 +522,7 @@ sequenceDiagram
 
 ### Конфигурация
 
-```yaml
+```yaml src/main/resources/application.yml
 management:
   tracing:
     enabled: true
@@ -544,8 +544,8 @@ Sampling: при 1.0 всеки trace се пази, което в production с
 
 Span за бизнес операция, която не е HTTP или DB, например пресмятане на цени:
 
-```java
-package com.example.orders.pricing;
+```java src/main/java/com/acme/shop/pricing/PricingService.java
+package com.acme.shop.pricing;
 
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
@@ -572,12 +572,14 @@ public class PricingService {
 
 `lowCardinalityKeyValue` става tag и на метриката `orders.pricing` (Timer), и на span-а. `highCardinalityKeyValue` отива само в span-а, точно заради cardinality правилото от раздел 6. Същото с анотация:
 
-```java
+```java src/main/java/com/acme/shop/common/observability/ObservabilityConfig.java
 @Bean
 ObservedAspect observedAspect(ObservationRegistry registry) {
     return new ObservedAspect(registry);
 }
+```
 
+```java src/main/java/com/acme/shop/pricing/PricingService.java
 @Observed(name = "orders.pricing", lowCardinalityKeyValues = {"type", "standard"})
 public Money price(Order order) { ... }
 ```
@@ -586,7 +588,7 @@ public Money price(Order order) { ... }
 
 Baggage е стойност, която пътува с trace-а през всички сървиси, за разлика от span tag, който е локален:
 
-```yaml
+```yaml src/main/resources/application.yml
 management:
   tracing:
     baggage:
@@ -603,8 +605,8 @@ management:
 
 ## 9. Локален stack с docker compose
 
-```yaml
-# observability/compose.yml
+```yaml observability/compose.yaml
+# observability/compose.yaml
 services:
   prometheus:
     image: prom/prometheus:v2.54.1
@@ -637,7 +639,7 @@ services:
     volumes: ["./grafana-datasources.yml:/etc/grafana/provisioning/datasources/ds.yml"]
 ```
 
-```yaml
+```yaml observability/grafana-datasources.yml
 # grafana-datasources.yml
 apiVersion: 1
 datasources:
@@ -671,7 +673,9 @@ datasources:
 
 ### Метрики в тестове
 
-```java
+```java src/test/java/com/acme/shop/order/OrderServiceMetricsTest.java
+package com.acme.shop.order;
+
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 class OrderServiceMetricsTest {

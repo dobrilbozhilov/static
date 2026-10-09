@@ -1,0 +1,57 @@
+{
+  "title": "Go",
+  "lead": "Подредена документация за backend на Go: как се прави всяко нещо, когато започваш сайт или микросървис. За всяка тема е избрана една библиотека, тази, която най-често ще срещнеш в корпоративен проект, с инсталация, инициализация и най-простия работещ пример. Кратко и по темата.",
+  "pages": [
+    { "file": "Modules_Tooling.md", "slug": "tooling", "group": "Основи", "short": "Go modules и инструменти", "blurb": "go mod, версии, Makefile, golangci-lint, go generate, air за hot reload." },
+    { "file": "Project_Structure.md", "slug": "structure", "group": "Основи", "short": "Структура на проекта", "blurb": "cmd/ и internal/, пакети по feature, main.go като composition root." },
+    { "file": "Configuration.md", "slug": "config", "group": "Основи", "short": "Конфигурация", "blurb": "Env променливи в struct с caarlos0/env, .env локално, валидация при старт." },
+    { "file": "Routing.md", "slug": "routing", "group": "Основи", "short": "Routing с chi", "blurb": "chi router, групи, sub-routers, URL параметри, mount на feature routes." },
+    { "file": "Handlers.md", "slug": "handlers", "group": "Основи", "short": "Handlers", "blurb": "http.HandlerFunc, четене на body, отговор с JSON, тънък handler и service." },
+    { "file": "Middleware.md", "slug": "middleware", "group": "Основи", "short": "Middleware", "blurb": "func(http.Handler) http.Handler, chi middleware, request id, recover, CORS." },
+    { "file": "JSON_DTO.md", "slug": "json", "group": "Основи", "short": "JSON и DTO", "blurb": "encoding/json, struct tags, request и response structs, време и пари." },
+    { "file": "Validation.md", "slug": "validation", "group": "Основи", "short": "Валидации", "blurb": "go-playground/validator, tags, custom правило, грешки по поле." },
+    { "file": "Errors.md", "slug": "errors", "group": "Основи", "short": "Грешки", "blurb": "errors.Is/As, wrap с %w, sentinel грешки, превод към HTTP Problem JSON." },
+
+    { "file": "Context.md", "slug": "context", "group": "Go специфики", "short": "Context", "blurb": "context.Context през всеки слой, timeouts, cancellation, стойности в context." },
+    { "file": "Concurrency.md", "slug": "concurrency", "group": "Go специфики", "short": "Goroutines и конкурентност", "blurb": "goroutines, channels, errgroup, sync.Mutex, worker pool, race detector." },
+    { "file": "Graceful_Shutdown.md", "slug": "shutdown", "group": "Go специфики", "short": "Graceful shutdown", "blurb": "signal.NotifyContext, http.Server.Shutdown, затваряне на ресурси в ред." },
+    { "file": "Interfaces_DI.md", "slug": "di", "group": "Go специфики", "short": "Интерфейси и DI", "blurb": "Малки интерфейси при потребителя, ръчно wiring в main, без DI framework." },
+    { "file": "Profiling.md", "slug": "pprof", "group": "Go специфики", "short": "Profiling с pprof", "blurb": "net/http/pprof, CPU и heap профил, go tool pprof, benchmark тестове." },
+
+    { "file": "Postgres_pgx.md", "slug": "postgres", "group": "Данни", "short": "PostgreSQL с pgx", "blurb": "pgxpool, connection pool настройки, заявки, scan в struct." },
+    { "file": "SQLC.md", "slug": "sqlc", "group": "Данни", "short": "sqlc вместо ORM", "blurb": "SQL файлове, генериран type-safe код, sqlc.yaml, кога и защо без ORM." },
+    { "file": "Relations.md", "slug": "relations", "group": "Данни", "short": "Релации", "blurb": "One-to-many и many-to-many с sqlc, JOIN, агрегиране в Go, без N+1." },
+    { "file": "Transactions.md", "slug": "transactions", "group": "Данни", "short": "Транзакции", "blurb": "pgx.BeginFunc, WithTx за sqlc, транзакция в service слоя, SELECT FOR UPDATE." },
+    { "file": "Migrations.md", "slug": "migrations", "group": "Данни", "short": "Миграции", "blurb": "golang-migrate, up/down файлове, CLI и embed, миграции при деплой." },
+    { "file": "Seeding.md", "slug": "seeding", "group": "Данни", "short": "Seeding", "blurb": "cmd/seed програма, идемпотентни INSERT ON CONFLICT, gofakeit за dev данни." },
+    { "file": "Pagination.md", "slug": "pagination", "group": "Данни", "short": "Pagination", "blurb": "Keyset pagination с cursor, limit с горна граница, формат на отговора." },
+    { "file": "Redis_Cache.md", "slug": "redis", "group": "Данни", "short": "Redis и кеш", "blurb": "go-redis/v9, cache-aside, TTL, инвалидация, броячи." },
+
+    { "file": "Authentication.md", "slug": "authentication", "group": "Сигурност", "short": "Authentication", "blurb": "JWT от OIDC доставчик (Keycloak, Auth0), проверка с go-oidc в middleware." },
+    { "file": "Authorization.md", "slug": "authorization", "group": "Сигурност", "short": "Authorization", "blurb": "Роли от token-а, RequireRole middleware, проверка за собственост в service." },
+    { "file": "Sessions.md", "slug": "sessions", "group": "Сигурност", "short": "Sessions и cookies", "blurb": "alexedwards/scs с Redis store, сигурни cookies, CSRF за server-rendered сайт." },
+
+    { "file": "Emails_Templates.md", "slug": "emails", "group": "Интеграции", "short": "Имейли и шаблони", "blurb": "html/template с embed, wneessen/go-mail за SMTP, Mailpit локално." },
+    { "file": "Files_S3.md", "slug": "files", "group": "Интеграции", "short": "Файлове и S3", "blurb": "Multipart upload, http.MaxBytesReader, aws-sdk-go-v2 за S3/MinIO, presigned URL." },
+    { "file": "Events.md", "slug": "events", "group": "Интеграции", "short": "Events в процеса", "blurb": "Малък event bus с интерфейс, синхронни и асинхронни слушатели, кога брокер." },
+    { "file": "WebSockets.md", "slug": "websockets", "group": "Интеграции", "short": "WebSockets", "blurb": "gorilla/websocket, hub с регистрация на клиенти, broadcast, ping/pong." },
+    { "file": "Cron.md", "slug": "cron", "group": "Интеграции", "short": "Cron задачи", "blurb": "robfig/cron/v3, cron изрази, един изпълнител при много инстанции." },
+    { "file": "Background_Jobs.md", "slug": "jobs", "group": "Интеграции", "short": "Background jobs", "blurb": "River: опашка в Postgres, worker, enqueue в същата транзакция, retries." },
+    { "file": "Kafka.md", "slug": "kafka", "group": "Интеграции", "short": "Kafka", "blurb": "segmentio/kafka-go, writer и reader, consumer group, commit след обработка." },
+    { "file": "NATS.md", "slug": "nats", "group": "Интеграции", "short": "NATS", "blurb": "nats.go, publish/subscribe, request/reply, queue groups, JetStream накратко." },
+    { "file": "HTTP_Clients.md", "slug": "http-clients", "group": "Интеграции", "short": "HTTP клиенти", "blurb": "net/http Client с timeouts, typed клиент за външно API, retry с backoff." },
+    { "file": "GRPC.md", "slug": "grpc", "group": "Интеграции", "short": "gRPC", "blurb": "protobuf, buf generate, grpc-go сървър и клиент, deadlines, interceptors." },
+
+    { "file": "Logging.md", "slug": "logging", "group": "Наблюдаемост", "short": "Logging със slog", "blurb": "log/slog, JSON handler, request id в лога, нива по среда." },
+    { "file": "Observability.md", "slug": "observability", "group": "Наблюдаемост", "short": "Метрики и tracing", "blurb": "Prometheus client_golang, /metrics, OpenTelemetry tracing, health endpoints." },
+
+    { "file": "Testing.md", "slug": "testing", "group": "Качество и доставка", "short": "Testing", "blurb": "testing и testify, table-driven тестове, httptest, testcontainers-go за Postgres." },
+    { "file": "API_Docs.md", "slug": "api-docs", "group": "Качество и доставка", "short": "API документация", "blurb": "OpenAPI first с oapi-codegen, генериран chi сървър, Swagger UI." },
+    { "file": "Docker_Deploy.md", "slug": "deploy", "group": "Качество и доставка", "short": "Docker и деплой", "blurb": "Multi-stage Dockerfile, distroless, статичен binary, compose за dev, probes." },
+
+    { "file": "Microservices_Structure.md", "slug": "microservices", "group": "Архитектура", "short": "Структура на микросървиси", "blurb": "Monorepo с няколко сървиса, споделен proto, граници, комуникация sync и async." },
+    { "file": "Frontend_Backend.md", "slug": "frontend-backend", "group": "Архитектура", "short": "Backend и фронтенд", "blurb": "SPA в web/ до Go API под /api, един домейн през ingress, Vite proxy локално, typed клиент от OpenAPI." },
+    { "file": "New_Service_Checklist.md", "slug": "new-service", "group": "Архитектура", "short": "Нов сървис: чеклист", "blurb": "Стъпка по стъпка от go mod init до production, с линкове към темите." }
+  ],
+  "external": []
+}

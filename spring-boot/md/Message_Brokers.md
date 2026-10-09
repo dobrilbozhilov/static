@@ -14,7 +14,7 @@
 
 ## 1. Зависимости и настройка
 
-```xml
+```xml pom.xml
 <!-- Kafka -->
 <dependency>
     <groupId>org.springframework.kafka</groupId>
@@ -38,7 +38,7 @@
 
 За тестовете (секция 9) добави с `test` scope `spring-boot-testcontainers`, `org.testcontainers:kafka` и `org.awaitility:awaitility`, всички с версии от Boot BOM-а.
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
@@ -56,7 +56,7 @@ spring:
       value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
       properties:
         spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
-        spring.json.trusted.packages: com.example.shop.messages
+        spring.json.trusted.packages: com.acme.shop.common.messaging
     listener:
       ack-mode: manual_immediate
       concurrency: 3
@@ -91,8 +91,8 @@ app:
 
 Независимо от broker-а, съобщението е envelope с метаданни и payload:
 
-```java
-package com.example.shop.messages;
+```java src/main/java/com/acme/shop/common/messaging/
+package com.acme.shop.common.messaging;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -123,8 +123,8 @@ Payload-ът носи идентификатори и данните, които
 
 ### Topic
 
-```java
-package com.example.shop.config;
+```java src/main/java/com/acme/shop/common/messaging/KafkaTopics.java
+package com.acme.shop.common.messaging;
 
 import org.apache.kafka.clients.admin.NewTopic;
 import org.springframework.kafka.config.TopicBuilder;
@@ -149,8 +149,8 @@ Boot авто-конфигурира `KafkaAdmin`, който при старт 
 
 ### Producer
 
-```java
-package com.example.shop.order;
+```java src/main/java/com/acme/shop/order/OrderEventProducer.java
+package com.acme.shop.order;
 
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
@@ -181,8 +181,8 @@ public class OrderEventProducer {
 
 ### Consumer
 
-```java
-package com.example.shop.billing;
+```java src/main/java/com/acme/shop/billing/BillingOrderConsumer.java
+package com.acme.shop.billing;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -226,7 +226,9 @@ flowchart LR
 
 `JsonSerializer` слага header `__TypeId__` с класа на обекта, а `JsonDeserializer` с `trusted.packages` го чете и инстанцира. За `EventEnvelope<OrderPlacedPayload>` generic аргументът се губи и payload-ът става `LinkedHashMap`. Най-простото и robust решение е един конкретен record на topic, който останалите примери ползват:
 
-```java
+```java src/main/java/com/acme/shop/common/messaging/OrderPlacedMessage.java
+package com.acme.shop.common.messaging;
+
 public record OrderPlacedMessage(UUID id, int version, Instant occurredAt,
                                  UUID orderId, UUID customerId, long totalCents, String currency) {}
 ```
@@ -237,8 +239,8 @@ public record OrderPlacedMessage(UUID id, int version, Instant occurredAt,
 
 Без конфигурация `DefaultErrorHandler` повтаря записа 10 пъти без пауза и после го прескача. Правилната настройка: exponential backoff и dead letter topic.
 
-```java
-package com.example.shop.config;
+```java src/main/java/com/acme/shop/common/messaging/KafkaErrorConfig.java
+package com.acme.shop.common.messaging;
 
 import org.springframework.kafka.listener.CommonErrorHandler;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
@@ -270,7 +272,7 @@ Boot подава `CommonErrorHandler` bean-а на default container factory. R
 
 Ако блокирането е проблем, `@RetryableTopic` прави non-blocking retry през отделни topics:
 
-```java
+```java src/main/java/com/acme/shop/billing/BillingOrderConsumer.java
 import org.springframework.kafka.annotation.DltHandler;
 import org.springframework.kafka.annotation.RetryableTopic;
 import org.springframework.retry.annotation.Backoff;
@@ -305,12 +307,14 @@ Spring създава `orders-retry-1000`, `orders-retry-2000`, `orders-retry-40
 
 Всяка at-least-once система доставя дубликати: след crash между обработката и ack, при rebalance, при retry. Consumer-ът трябва да ги разпознава.
 
-```sql
+```sql src/main/resources/db/migration/V20250107_1200__create_processed_messages.sql
 create table processed_messages (message_id uuid primary key, consumer text not null,
                                  processed_at timestamptz not null default now());
 ```
 
-```java
+```java src/main/java/com/acme/shop/billing/BillingService.java
+package com.acme.shop.billing;
+
 @Service
 public class BillingService {
 
@@ -369,8 +373,8 @@ registry.getListenerContainer("billing-orders").resume();
 
 Fire-and-forget: ако никой не слуша, съобщението изчезва. Идеално за "кажи на всички инстанции", например WebSocket broadcast или cache invalidation.
 
-```java
-package com.example.shop.config;
+```java src/main/java/com/acme/shop/common/messaging/RedisPubSubConfig.java
+package com.acme.shop.common.messaging;
 
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.listener.ChannelTopic;
@@ -392,7 +396,9 @@ public class RedisPubSubConfig {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/OrderStatusSubscriber.java
+package com.acme.shop.order;
+
 @Component
 public class OrderStatusSubscriber {
 
@@ -420,8 +426,8 @@ Redis Streams е append-only log с consumer groups и pending list. Прили�
 
 Запис с `redis.opsForStream().add(StreamRecords.newRecord().in("orders").ofMap(Map.of("id", id, "type", "OrderPlaced", "payload", json)))`. Consumer group с ръчен ack:
 
-```java
-package com.example.shop.billing;
+```java src/main/java/com/acme/shop/billing/
+package com.acme.shop.billing;
 
 import org.springframework.data.redis.connection.stream.*;
 import org.springframework.data.redis.stream.StreamMessageListenerContainer;
@@ -487,7 +493,7 @@ public class OrderStreamHandler {
 
 `XREADGROUP` дава съобщението на един consumer от групата и го слага в pending entries list (PEL), докато не дойде `XACK`. Съобщение, което е pending дълго (consumer-ът е умрял), се взема от друг с `XAUTOCLAIM`. Методът живее в `OrderStreamHandler`, който получава и `consumerName`:
 
-```java
+```java src/main/java/com/acme/shop/billing/OrderStreamHandler.java
 @Scheduled(fixedDelay = 30, timeUnit = TimeUnit.SECONDS)
 public void reclaimStale() {
     PendingMessages pending = redis.opsForStream().pending(STREAM, GROUP, Range.unbounded(), 100);
@@ -516,8 +522,8 @@ NATS е един бинарен файл, стартира за милисеку
 
 ### Connection bean
 
-```java
-package com.example.shop.config;
+```java src/main/java/com/acme/shop/common/messaging/NatsConfig.java
+package com.acme.shop.common.messaging;
 
 import io.nats.client.Connection;
 import io.nats.client.Nats;
@@ -545,8 +551,8 @@ public class NatsConfig {
 
 Subjects са йерархични с точки, `*` замества едно ниво, `>` замества остатъка: `orders.placed`, `orders.*`, `orders.>`. Публикуването е един ред: `nats.publish("orders.placed", json.writeValueAsBytes(message))`. Listener компонент с `Dispatcher`:
 
-```java
-package com.example.shop.nats;
+```java src/main/java/com/acme/shop/common/messaging/NatsListener.java
+package com.acme.shop.common.messaging;
 
 import io.nats.client.Connection;
 import io.nats.client.Dispatcher;
@@ -621,7 +627,9 @@ Queue group `inventory` прави load balancing между инстанции�
 
 ### JetStream
 
-```java
+```java src/main/java/com/acme/shop/common/messaging/JetStreamConfig.java
+package com.acme.shop.common.messaging;
+
 import io.nats.client.*;
 import io.nats.client.api.*;
 
@@ -647,7 +655,9 @@ Publish е `js.publish(NatsMessage.builder().subject("orders.placed").headers(he
 
 Durable pull consumer с explicit ack, `nak` с delay и `maxDeliver`:
 
-```java
+```java src/main/java/com/acme/shop/billing/JetStreamBillingConsumer.java
+package com.acme.shop.billing;
+
 @Component
 public class JetStreamBillingConsumer implements SmartLifecycle {
 
@@ -703,7 +713,9 @@ Push consumer е по-прост (`js.subscribe(subject, queue, dispatcher, hand
 
 ### Testcontainers за NATS
 
-```java
+```java src/test/java/com/acme/shop/billing/NatsBillingIT.java
+package com.acme.shop.billing;
+
 @Testcontainers
 @SpringBootTest
 class NatsBillingIT {
@@ -722,7 +734,9 @@ class NatsBillingIT {
 
 Когато ти трябва класическа опашка с routing по ключ, prefetch и dead letter exchange, и екипът го познава. Зависимостта е `spring-boot-starter-amqp`.
 
-```java
+```java src/main/java/com/acme/shop/common/messaging/RabbitConfig.java
+package com.acme.shop.common.messaging;
+
 @Configuration
 public class RabbitConfig {
 
@@ -769,7 +783,7 @@ Dead letter без процес е просто изгубени съобщен�
 
 ### Local dev с docker compose
 
-```yaml
+```yaml compose.yaml
 services:
   kafka:
     image: apache/kafka:3.9.0
@@ -805,7 +819,9 @@ KRaft режимът няма нужда от ZooKeeper. `auto.create.topics.ena
 
 ### Kafka с Testcontainers и @ServiceConnection
 
-```java
+```java src/test/java/com/acme/shop/billing/BillingOrderConsumerIT.java
+package com.acme.shop.billing;
+
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.testcontainers.kafka.KafkaContainer;
 

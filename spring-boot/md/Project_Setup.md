@@ -52,7 +52,7 @@ Starter е празен артефакт, чиято единствена сто
 
 ### Maven pom.xml
 
-```xml
+```xml pom.xml
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -154,7 +154,7 @@ Starter е празен артефакт, чиято единствена сто
 
 Същият проект в `build.gradle.kts`. Разликата е, че версиите се управляват от плъгина `io.spring.dependency-management`, а не от parent:
 
-```kotlin
+```kotlin build.gradle.kts
 plugins {
     java
     id("org.springframework.boot") version "3.5.6"
@@ -190,7 +190,7 @@ tasks.withType<Test> { useJUnitPlatform() }
 
 ## 2. Минимален работещ пример
 
-```java
+```java src/main/java/com/acme/shop/ShopApplication.java
 package com.acme.shop;
 
 import org.springframework.boot.SpringApplication;
@@ -205,7 +205,7 @@ public class ShopApplication {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/product/ProductController.java
 package com.acme.shop.product;
 
 import org.springframework.web.bind.annotation.GetMapping;
@@ -229,7 +229,7 @@ class ProductController {
 }
 ```
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   application:
     name: shop
@@ -366,7 +366,7 @@ flowchart TB
 
 Единствената форма на инжектиране, която ползваме. Полетата са `final`, зависимостите са явни, класът се тества с `new`, а цикличните зависимости гърмят при старт, вместо да се крият:
 
-```java
+```java src/main/java/com/acme/shop/order/OrderService.java
 package com.acme.shop.order;
 
 import org.springframework.stereotype.Service;
@@ -402,7 +402,7 @@ public class OrderService {
 
 За класове, които не са твои (библиотечни клиенти, `Clock`, `RestClient`), или за bean-ове, чието създаване изисква логика:
 
-```java
+```java src/main/java/com/acme/shop/common/config/AppConfig.java
 package com.acme.shop.common.config;
 
 import java.time.Clock;
@@ -431,7 +431,7 @@ public class AppConfig {
 
 Когато два bean-а реализират един интерфейс, Spring не знае кой да инжектира и спира с `NoUniqueBeanDefinitionException`:
 
-```java
+```java src/main/java/com/acme/shop/payment/
 public interface PaymentGateway {
     PaymentResult charge(Order order);
 }
@@ -444,7 +444,9 @@ class StripeGateway implements PaymentGateway { ... }
 class PaypalGateway implements PaymentGateway { ... }
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/CheckoutService.java
+package com.acme.shop.order;
+
 @Service
 public class CheckoutService {
 
@@ -463,7 +465,9 @@ public class CheckoutService {
 
 ### List, Map, Optional и ObjectProvider
 
-```java
+```java src/main/java/com/acme/shop/notification/NotificationService.java
+package com.acme.shop.notification;
+
 @Service
 public class NotificationService {
 
@@ -508,7 +512,9 @@ public class NotificationService {
 
 Singleton bean трябва да е stateless или thread-safe, защото всички request-и го споделят. Инжектирането на request-scoped bean в singleton работи, защото Spring слага proxy, който при всяко извикване търси реалния обект за текущата нишка:
 
-```java
+```java src/main/java/com/acme/shop/common/web/RequestContext.java
+package com.acme.shop.common.web;
+
 @Component
 @RequestScope
 public class RequestContext {
@@ -534,7 +540,9 @@ flowchart TB
 
 ### Инициализация на един bean
 
-```java
+```java src/main/java/com/acme/shop/payment/ExchangeRateCache.java
+package com.acme.shop.payment;
+
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 
@@ -574,7 +582,9 @@ public class ExchangeRateCache {
 | `@EventListener(ApplicationReadyEvent.class)` | След всички runners, HTTP портът вече приема заявки | Warm-up, регистрация в service discovery, нотификация |
 | `SmartLifecycle` | Start и stop в контролиран ред с `getPhase()` | Consumer-и, scheduler-и, всичко, което трябва да спре преди другото |
 
-```java
+```java src/main/java/com/acme/shop/common/config/StartupChecks.java
+package com.acme.shop.common.config;
+
 @Component
 public class StartupChecks implements ApplicationRunner {
 
@@ -600,7 +610,9 @@ public class StartupChecks implements ApplicationRunner {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/common/config/ReadyListener.java
+package com.acme.shop.common.config;
+
 @Component
 public class ReadyListener {
 
@@ -613,7 +625,9 @@ public class ReadyListener {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/common/events/OutboxPoller.java
+package com.acme.shop.common.events;
+
 @Component
 public class OutboxPoller implements SmartLifecycle {
 
@@ -664,7 +678,7 @@ public class OutboxPoller implements SmartLifecycle {
 
 Ако изнасяш общ код в споделена библиотека за няколко сървиса, пишеш същия механизъм:
 
-```java
+```java platform-starter/src/main/java/com/acme/platform/audit/AuditAutoConfiguration.java
 package com.acme.platform.audit;
 
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -686,11 +700,7 @@ public class AuditAutoConfiguration {
 }
 ```
 
-```
-src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports
-```
-
-```
+```text platform-starter/src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports
 com.acme.platform.audit.AuditAutoConfiguration
 ```
 
@@ -710,7 +720,7 @@ java -jar target/shop-0.0.1-SNAPSHOT.jar --debug
 
 Същото през actuator, без рестарт:
 
-```yaml
+```yaml src/main/resources/application.yml
 management:
   endpoints:
     web:
@@ -727,12 +737,12 @@ GET /actuator/beans
 
 ### Изключване на автоконфигурация
 
-```java
+```java src/main/java/com/acme/shop/ShopApplication.java
 @SpringBootApplication(exclude = UserDetailsServiceAutoConfiguration.class)
 public class ShopApplication { ... }
 ```
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   autoconfigure:
     exclude:
@@ -778,7 +788,7 @@ src/main/resources
 
 С `spring-boot-devtools` в classpath получаваш автоматичен рестарт при промяна на класовете (две classloader-а: един за библиотеки, един за твоя код, рестартира се само вторият), LiveReload сървър, кеширането на шаблони е изключено, а `spring.jpa.show-sql` и подобни "dev" стойности са включени по подразбиране. Devtools се самоизключва, когато приложението е пуснато с `java -jar`, така че няма риск да се озове в production, стига да го държиш `optional`.
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   devtools:
     restart:
@@ -803,7 +813,7 @@ java -jar target/shop-0.0.1-SNAPSHOT.jar --spring.profiles.active=prod
 
 Полезни флагове на плъгина:
 
-```xml
+```xml pom.xml
 <plugin>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-maven-plugin</artifactId>

@@ -15,7 +15,7 @@
 
 ## 1. Зависимости и настройка
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-web</artifactId>
@@ -31,7 +31,7 @@
 </dependency>
 ```
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   jackson:
     default-property-inclusion: non_null
@@ -53,7 +53,7 @@ spring:
 
 ## 2. RestController срещу Controller
 
-```java
+```java src/main/java/com/acme/shop/order/
 @RestController
 @RequestMapping("/api/orders")
 class OrderController {
@@ -123,7 +123,7 @@ sequenceDiagram
 | `InputStream`, `Reader` | Сурово тяло |
 | `@SessionAttribute`, `@RequestAttribute` | Атрибути от сесия или от filter |
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @PostMapping
 ResponseEntity<OrderResponse> create(@RequestBody @Valid CreateOrderRequest request,
                                      @AuthenticationPrincipal UserAccount user,
@@ -156,7 +156,7 @@ ResponseEntity.ok().cacheControl(CacheControl.maxAge(Duration.ofMinutes(5)).cach
 
 Когато статусът е константен и няма headers, `@ResponseStatus` е по-кратък:
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @PostMapping
 @ResponseStatus(HttpStatus.CREATED)
 OrderResponse create(@RequestBody @Valid CreateOrderRequest request) {
@@ -190,7 +190,7 @@ void delete(@PathVariable Long id) {
 
 ### DTO
 
-```java
+```java src/main/java/com/acme/shop/order/dto/
 package com.acme.shop.order.dto;
 
 import jakarta.validation.Valid;
@@ -227,7 +227,7 @@ public record OrderSummary(Long id, String number, OrderStatus status, BigDecima
 
 ### Controller
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 package com.acme.shop.order;
 
 import com.acme.shop.order.dto.*;
@@ -295,7 +295,7 @@ class OrderController {
 
 ### Service
 
-```java
+```java src/main/java/com/acme/shop/order/OrderService.java
 package com.acme.shop.order;
 
 import com.acme.shop.common.error.NotFoundException;
@@ -420,7 +420,9 @@ Content-Type: application/problem+json
 
 Jackson десериализира records по канонния конструктор без допълнителни анотации. Имената на JSON полетата съвпадат с компонентите; за различно име се ползва `@JsonProperty`:
 
-```java
+```java src/main/java/com/acme/shop/order/dto/CreateOrderRequest.java
+package com.acme.shop.order.dto;
+
 public record CreateOrderRequest(
         @JsonProperty("order_lines") @NotEmpty List<LineRequest> lines,
         @JsonFormat(pattern = "dd.MM.yyyy") LocalDate deliveryDate,
@@ -443,7 +445,9 @@ public record CreateOrderRequest(
 
 Patch DTO:
 
-```java
+```java src/main/java/com/acme/shop/order/dto/PatchOrderRequest.java
+package com.acme.shop.order.dto;
+
 public record PatchOrderRequest(
         @Size(max = 500) String note,
         @Valid Address shippingAddress) {}
@@ -453,7 +457,7 @@ Service-ът проверява всяко поле за `null` (виж `patch` 
 
 С `JsonNullable`:
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.openapitools</groupId>
     <artifactId>jackson-databind-nullable</artifactId>
@@ -461,7 +465,7 @@ Service-ът проверява всяко поле за `null` (виж `patch` 
 </dependency>
 ```
 
-```java
+```java src/main/java/com/acme/shop/
 @Bean
 JsonNullableModule jsonNullableModule() {
     return new JsonNullableModule();
@@ -472,7 +476,7 @@ public record PatchOrderRequest(
         JsonNullable<Address> shippingAddress) {}
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/OrderService.java
 if (request.note().isPresent()) {
     order.setNote(request.note().get());   // get() може да върне null и това означава "изчисти"
 }
@@ -484,7 +488,7 @@ if (request.note().isPresent()) {
 
 ### Upload
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @PostMapping(value = "/{id}/attachments", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
 ResponseEntity<AttachmentResponse> upload(@PathVariable Long id,
                                           @RequestPart("file") MultipartFile file,
@@ -508,7 +512,7 @@ curl -F "file=@invoice.pdf" -F 'meta={"kind":"INVOICE"};type=application/json' \
 
 ### Download
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @GetMapping("/{id}/invoice")
 ResponseEntity<Resource> invoice(@PathVariable Long id) {
     var pdf = invoiceService.render(id);   // връща byte[] или Path
@@ -528,7 +532,7 @@ ResponseEntity<Resource> invoice(@PathVariable Long id) {
 
 Когато CSV с милион реда не трябва да се събира в паметта:
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @GetMapping(value = "/export", produces = "text/csv")
 ResponseEntity<StreamingResponseBody> export(@Valid OrderFilter filter) {
     StreamingResponseBody body = out -> {
@@ -551,7 +555,7 @@ ResponseEntity<StreamingResponseBody> export(@Valid OrderFilter filter) {
 
 С виртуални нишки обикновеният блокиращ метод е правилният избор. Async return типовете остават за три случая: композиране на няколко паралелни извиквания, дълго чакане на външно събитие и push към клиента.
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @GetMapping("/{id}/dashboard")
 CompletableFuture<DashboardResponse> dashboard(@PathVariable Long id) {
     var order = CompletableFuture.supplyAsync(() -> orderService.get(id), executor);
@@ -566,7 +570,7 @@ CompletableFuture<DashboardResponse> dashboard(@PathVariable Long id) {
 
 `DeferredResult<T>` е същото, но попълвано от друго място (например callback от message broker):
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @PostMapping("/{id}/pay")
 DeferredResult<PaymentResponse> pay(@PathVariable Long id) {
     var result = new DeferredResult<PaymentResponse>(Duration.ofSeconds(30).toMillis());
@@ -577,7 +581,7 @@ DeferredResult<PaymentResponse> pay(@PathVariable Long id) {
 
 `SseEmitter` праща събития към браузъра по една HTTP връзка:
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @GetMapping(value = "/{id}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
 SseEmitter events(@PathVariable Long id) {
     var emitter = new SseEmitter(Duration.ofMinutes(5).toMillis());
@@ -592,7 +596,7 @@ Timeout за всички async типове е `spring.mvc.async.request-timeou
 
 ### Страница и форма
 
-```java
+```java src/main/java/com/acme/shop/order/web/OrderPageController.java
 package com.acme.shop.order.web;
 
 import jakarta.validation.Valid;
@@ -649,7 +653,9 @@ class OrderPageController {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/web/OrderForm.java
+package com.acme.shop.order.web;
+
 public record OrderForm(
         @NotNull Long productId,
         @Min(1) @Max(100) int quantity,
@@ -661,7 +667,7 @@ public record OrderForm(
 }
 ```
 
-```html
+```html src/main/resources/templates/orders/new.html
 <!-- src/main/resources/templates/orders/new.html -->
 <form th:action="@{/orders}" th:object="${form}" method="post">
   <select th:field="*{productId}">
@@ -692,7 +698,7 @@ public record OrderForm(
 
 ### CORS
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @CrossOrigin(origins = "https://shop.acme.com", maxAge = 3600)
 @RestController
 @RequestMapping("/api/orders")
@@ -705,7 +711,7 @@ class OrderController { ... }
 
 `@InitBinder` настройва `WebDataBinder` за контролера: trimming, забранени полета, custom editors.
 
-```java
+```java src/main/java/com/acme/shop/order/web/OrderPageController.java
 @InitBinder
 void initBinder(WebDataBinder binder) {
     // празните низове от форми стават null, за да минават @Size и Optional проверки
@@ -721,7 +727,7 @@ void initBinder(WebDataBinder binder) {
 
 Enum от URL с различен регистър и value object за идентификатор:
 
-```java
+```java src/main/java/com/acme/shop/common/web/
 package com.acme.shop.common.web;
 
 import org.springframework.core.convert.converter.Converter;
@@ -746,7 +752,7 @@ public class OrderNumberConverter implements Converter<String, OrderNumber> {
 
 Spring Boot регистрира автоматично всеки `Converter`, `GenericConverter` и `Formatter` bean в `ConversionService` на MVC. След това:
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @GetMapping("/by-number/{number}")
 OrderResponse byNumber(@PathVariable OrderNumber number) { ... }
 
@@ -762,7 +768,7 @@ Page<OrderSummary> list(@RequestParam(required = false) OrderStatus status, Page
 
 `@WebMvcTest` вдига само MVC слоя: контролера, `@ControllerAdvice`, конверторите, Jackson и Spring Security. Service се подменя с mock:
 
-```java
+```java src/test/java/com/acme/shop/order/OrderControllerTest.java
 package com.acme.shop.order;
 
 import org.junit.jupiter.api.Test;

@@ -16,7 +16,7 @@
 
 `spring-boot-starter-web` не включва валидация от Boot 2.3 нататък. Трябва изрично:
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-validation</artifactId>
@@ -25,7 +25,7 @@
 
 Това носи `hibernate-validator` и `jakarta.validation-api`. Boot създава `LocalValidatorFactoryBean`, свързва го със Spring `MessageSource` за съобщенията и позволява инжектиране на bean-ове в `ConstraintValidator`-ите.
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   mvc:
     problemdetails:
@@ -42,8 +42,8 @@ spring:
 
 ## 2. Минимален работещ пример
 
-```java
-package com.example.orders.web.dto;
+```java src/main/java/com/acme/shop/order/dto/CreateOrderRequest.java
+package com.acme.shop.order.dto;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -63,8 +63,8 @@ public record CreateOrderRequest(
 }
 ```
 
-```java
-package com.example.orders.web;
+```java src/main/java/com/acme/shop/order/OrderController.java
+package com.acme.shop.order;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -186,7 +186,9 @@ sequenceDiagram
 
 Анотацията на record компонент се прилага върху полето и върху accessor-а. Hibernate Validator разбира records от версия 6.2 и валидира полетата. Нищо специално не трябва:
 
-```java
+```java src/main/java/com/acme/shop/customer/dto/UpdateCustomerRequest.java
+package com.acme.shop.customer.dto;
+
 public record UpdateCustomerRequest(
         @NotBlank @Size(max = 100) String displayName,
         @Email @Size(max = 254) String email,
@@ -199,7 +201,9 @@ public record UpdateCustomerRequest(
 
 `@Valid` каскадира валидацията в обекта или в елементите. Без него nested record-ът се приема какъвто е.
 
-```java
+```java src/main/java/com/acme/shop/invoice/dto/CreateInvoiceRequest.java
+package com.acme.shop.invoice.dto;
+
 public record CreateInvoiceRequest(
         @NotNull @Valid Party issuer,
         @NotNull @Valid Party recipient,
@@ -218,14 +222,16 @@ Container element constraints (`List<@Valid Line>`, `Map<@NotBlank String, ...>`
 
 Един DTO за create и update, но различни правила: при create `id` трябва да е `null`, при update е задължителен.
 
-```java
-package com.example.orders.web.validation;
+```java src/main/java/com/acme/shop/common/validation/
+package com.acme.shop.common.validation;
 
 public interface OnCreate {}
 public interface OnUpdate {}
 ```
 
-```java
+```java src/main/java/com/acme/shop/product/dto/ProductRequest.java
+package com.acme.shop.product.dto;
+
 public record ProductRequest(
         @Null(groups = OnCreate.class) @NotNull(groups = OnUpdate.class) UUID id,
         @NotBlank(groups = {OnCreate.class, OnUpdate.class}) String name,
@@ -233,7 +239,7 @@ public record ProductRequest(
 ) {}
 ```
 
-```java
+```java src/main/java/com/acme/shop/product/ProductController.java
 @PostMapping
 public ResponseEntity<ProductResponse> create(@Validated(OnCreate.class) @RequestBody ProductRequest request) { ... }
 
@@ -254,8 +260,8 @@ public ProductResponse update(@PathVariable UUID id,
 
 ### Constraint с достъп до repository
 
-```java
-package com.example.orders.web.validation;
+```java src/main/java/com/acme/shop/common/validation/UniqueEmail.java
+package com.acme.shop.common.validation;
 
 import jakarta.validation.Constraint;
 import jakarta.validation.Payload;
@@ -272,10 +278,10 @@ public @interface UniqueEmail {
 }
 ```
 
-```java
-package com.example.orders.web.validation;
+```java src/main/java/com/acme/shop/common/validation/UniqueEmailValidator.java
+package com.acme.shop.common.validation;
 
-import com.example.orders.user.UserAccountRepository;
+import com.acme.shop.user.UserAccountRepository;
 import jakarta.validation.ConstraintValidator;
 import jakarta.validation.ConstraintValidatorContext;
 
@@ -302,7 +308,9 @@ Boot конфигурира `SpringConstraintValidatorFactory`, така че va
 
 ### Чиста проверка без зависимости: IBAN
 
-```java
+```java src/main/java/com/acme/shop/common/validation/ValidIban.java
+package com.acme.shop.common.validation;
+
 @Documented
 @Constraint(validatedBy = IbanValidator.class)
 @Target({ElementType.FIELD, ElementType.PARAMETER, ElementType.RECORD_COMPONENT, ElementType.TYPE_USE})
@@ -314,7 +322,9 @@ public @interface ValidIban {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/common/validation/IbanValidator.java
+package com.acme.shop.common.validation;
+
 public class IbanValidator implements ConstraintValidator<ValidIban, String> {
 
     @Override
@@ -340,7 +350,9 @@ public class IbanValidator implements ConstraintValidator<ValidIban, String> {
 
 ### Class-level constraint: две полета заедно
 
-```java
+```java src/main/java/com/acme/shop/common/validation/DateRange.java
+package com.acme.shop.common.validation;
+
 @Documented
 @Constraint(validatedBy = DateRangeValidator.class)
 @Target(ElementType.TYPE)
@@ -354,8 +366,8 @@ public @interface DateRange {
 }
 ```
 
-```java
-package com.example.orders.web.validation;
+```java src/main/java/com/acme/shop/common/validation/DateRangeValidator.java
+package com.acme.shop.common.validation;
 
 import jakarta.validation.ConstraintValidator;
 import jakarta.validation.ConstraintValidatorContext;
@@ -392,7 +404,9 @@ public class DateRangeValidator implements ConstraintValidator<DateRange, Object
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/promotion/dto/CreatePromotionRequest.java
+package com.acme.shop.promotion.dto;
+
 @DateRange(start = "validFrom", end = "validTo")
 public record CreatePromotionRequest(
         @NotBlank String code,
@@ -408,7 +422,9 @@ public record CreatePromotionRequest(
 
 Когато правилото е специфично за един DTO и не си струва анотация:
 
-```java
+```java src/main/java/com/acme/shop/payment/dto/TransferRequest.java
+package com.acme.shop.payment.dto;
+
 public record TransferRequest(@NotBlank String fromIban, @NotBlank String toIban,
                               @NotNull @DecimalMin("0.01") BigDecimal amount) {
 
@@ -425,8 +441,8 @@ public record TransferRequest(@NotBlank String fromIban, @NotBlank String toIban
 
 В service, batch import или listener нямаш `@Valid` магията. Инжектираш `Validator`:
 
-```java
-package com.example.orders.service;
+```java src/main/java/com/acme/shop/order/OrderImportService.java
+package com.acme.shop.order;
 
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
@@ -467,7 +483,7 @@ public class OrderImportService {
 
 Съобщенията в `message` атрибута са шаблони. `{...}` е ключ, който се интерполира от `ValidationMessages.properties` в classpath root, или от Spring `MessageSource` (Boot свързва двете). `${validatedValue}` и атрибутите на анотацията (`{min}`, `{max}`) са достъпни в шаблона.
 
-```properties
+```properties src/main/resources/validation.properties
 # src/main/resources/validation.properties
 app.validation.email.taken=Email адресът вече е регистриран
 app.validation.iban.invalid=Невалиден IBAN
@@ -478,14 +494,16 @@ jakarta.validation.constraints.NotBlank.message=Полето е задължит
 jakarta.validation.constraints.Size.message=Дължината трябва да е между {min} и {max}
 ```
 
-```properties
+```properties src/main/resources/validation_en.properties
 # src/main/resources/validation_en.properties
 app.validation.email.taken=Email address is already registered
 app.validation.iban.invalid=Invalid IBAN
 jakarta.validation.constraints.NotBlank.message=Field is required
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/dto/CreateOrderRequest.java
+package com.acme.shop.order.dto;
+
 public record CreateOrderRequest(
         @NotEmpty List<@Valid Item> items
 ) {
@@ -502,8 +520,8 @@ public record CreateOrderRequest(
 
 Това е advice-ът, който превръща трите вида validation exception в един формат. Разширява `ResponseEntityExceptionHandler`, за да наследи обработката на всички останали Spring MVC грешки.
 
-```java
-package com.example.orders.web.error;
+```java src/main/java/com/acme/shop/common/error/ValidationExceptionHandler.java
+package com.acme.shop.common.error;
 
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
@@ -611,8 +629,8 @@ public class ValidationExceptionHandler extends ResponseEntityExceptionHandler {
 
 Грешна конфигурация трябва да спира приложението при старт, не при първия request.
 
-```java
-package com.example.orders.config;
+```java src/main/java/com/acme/shop/common/config/PaymentProperties.java
+package com.acme.shop.common.config;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -642,7 +660,7 @@ APPLICATION FAILED TO START
 ***************************
 
 Description:
-Binding to target com.example.orders.config.PaymentProperties failed:
+Binding to target com.acme.shop.common.config.PaymentProperties failed:
 
     Property: app.payment.api-key
     Value: ""
@@ -655,8 +673,8 @@ Binding to target com.example.orders.config.PaymentProperties failed:
 
 За service, който се вика от няколко места (controller, scheduler, listener), има смисъл да валидираш на входа на service-а:
 
-```java
-package com.example.orders.service;
+```java src/main/java/com/acme/shop/inventory/InventoryService.java
+package com.acme.shop.inventory;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
@@ -690,7 +708,9 @@ public class InventoryService {
 | Entity (Bean Validation) | `@Column @Email String email` | при `flush`, Hibernate вика validator-а | защита от код, който заобикаля DTO слоя |
 | База данни | `not null`, `unique`, `check` | при `insert`/`update` | единствената гаранция при паралелни заявки и други приложения |
 
-```java
+```java src/main/java/com/acme/shop/user/UserAccount.java
+package com.acme.shop.user;
+
 @Entity
 @Table(name = "user_account", uniqueConstraints = @UniqueConstraint(columnNames = "email"))
 public class UserAccount {
@@ -716,7 +736,9 @@ public class UserAccount {
 
 Валидацията отхвърля, sanitization-ът поправя. Примери за поправка, която е безопасна: trim на whitespace, lowercase на email, нормализиране на телефон. Три места за това:
 
-```java
+```java src/main/java/com/acme/shop/user/dto/RegisterRequest.java
+package com.acme.shop.user.dto;
+
 // 1. Компактен конструктор на record: работи за Jackson и за тестове
 public record RegisterRequest(String email, String displayName) {
     public RegisterRequest {
@@ -759,8 +781,8 @@ public void initBinder(WebDataBinder binder) {
 
 ### Чист unit тест на DTO
 
-```java
-package com.example.orders.web.dto;
+```java src/test/java/com/acme/shop/order/dto/CreateOrderRequestTest.java
+package com.acme.shop.order.dto;
 
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
@@ -790,8 +812,8 @@ class CreateOrderRequestTest {
 
 ### Controller тест с @WebMvcTest
 
-```java
-package com.example.orders.web;
+```java src/test/java/com/acme/shop/order/OrderControllerValidationTest.java
+package com.acme.shop.order;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

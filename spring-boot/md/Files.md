@@ -14,7 +14,7 @@
 
 ## 1. Зависимости и настройка
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-web</artifactId>
@@ -41,7 +41,7 @@
 </dependency>
 ```
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   servlet:
     multipart:
@@ -68,7 +68,7 @@ app:
 
 ### MinIO за локална разработка
 
-```yaml
+```yaml compose.yaml
 services:
   minio:
     image: minio/minio:latest
@@ -91,7 +91,9 @@ volumes:
 
 Качване на снимка към продукт, с JSON част до файла, валидация и запис през `StorageService`.
 
-```java
+```java src/main/java/com/acme/shop/product/
+package com.acme.shop.product;
+
 @RestController
 @RequestMapping("/api/products/{productId}/images")
 public class ProductImageController {
@@ -118,7 +120,9 @@ public record ImageMeta(@Size(max = 200) String altText, boolean primary) {}
 
 `@RequestPart` разбира content type на частта: JSON частта `meta` се десериализира с Jackson, частта `file` идва като `MultipartFile`. `@RequestParam` работи само за файлове и прости полета от формата, затова при смесена заявка ползвай `@RequestPart`; за няколко файла с едно име параметърът е `@RequestParam("files") List<MultipartFile>`. Полетата се валидират с `@Valid`, както всяко друго тяло, виж [Валидации](Validation.md). Клиентът праща `multipart/form-data` с две части, `meta` с `Content-Type: application/json` и `file` с бинарното съдържание, и получава `201 Created` с метаданните на записания файл.
 
-```java
+```java src/main/java/com/acme/shop/product/ProductImageService.java
+package com.acme.shop.product;
+
 @Service
 public class ProductImageService {
 
@@ -175,7 +179,9 @@ public class ProductImageService {
 
 Разширението и `Content-Type` от клиента са просто текст, който всеки може да напише. Единственият източник на истина е съдържанието.
 
-```java
+```java src/main/java/com/acme/shop/file/FileValidator.java
+package com.acme.shop.file;
+
 import java.awt.image.BufferedImage;
 import javax.imageio.ImageIO;
 import org.apache.tika.Tika;
@@ -237,7 +243,9 @@ Tika чете първите байтове и разпознава реални
 
 `MaxUploadSizeExceededException` се хвърля от multipart resolver-а преди controller-а и се обработва в advice-а като всяка друга грешка, виж [Грешки и ProblemDetail](Exception_Handling.md).
 
-```java
+```java src/main/java/com/acme/shop/file/FileExceptionHandler.java
+package com.acme.shop.file;
+
 @RestControllerAdvice
 public class FileExceptionHandler {
 
@@ -255,8 +263,8 @@ public class FileExceptionHandler {
 
 ## 4. StorageService с две имплементации
 
-```java
-package com.example.orders.files;
+```java src/main/java/com/acme/shop/common/storage/StorageService.java
+package com.acme.shop.common.storage;
 
 import java.io.InputStream;
 import java.net.URI;
@@ -276,7 +284,9 @@ Service слоят работи само с този интерфейс. Коя 
 
 ### Локален диск
 
-```java
+```java src/main/java/com/acme/shop/common/storage/LocalStorageService.java
+package com.acme.shop.common.storage;
+
 import org.springframework.core.io.PathResource;
 
 @Service
@@ -345,7 +355,9 @@ public class LocalStorageService implements StorageService {
 
 ### S3 и MinIO
 
-```java
+```java src/main/java/com/acme/shop/common/config/S3Config.java
+package com.acme.shop.common.config;
+
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
@@ -375,7 +387,9 @@ public class S3Config {
 
 В AWS production не подаваш статични ключове и endpoint: махаш `credentialsProvider` и `endpointOverride`, SDK взима IAM ролята на pod-а през default chain и ползва virtual-hosted адреси. `endpointOverride` и path style са само за MinIO; направи ги условни по това дали `endpoint` е зададен.
 
-```java
+```java src/main/java/com/acme/shop/common/storage/S3StorageService.java
+package com.acme.shop.common.storage;
+
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.model.*;
 import software.amazon.awssdk.services.s3.presigner.model.*;
@@ -449,7 +463,9 @@ Bucket на environment (`orders-dev`, `orders-staging`, `orders-prod`) е на�
 
 ### Metadata entity
 
-```java
+```java src/main/java/com/acme/shop/file/StoredFile.java
+package com.acme.shop.file;
+
 @Entity
 @Table(name = "stored_file")
 public class StoredFile {
@@ -508,7 +524,9 @@ sequenceDiagram
     C-->>B: 200 с Content-Disposition и поток
 ```
 
-```java
+```java src/main/java/com/acme/shop/file/FileController.java
+package com.acme.shop.file;
+
 @RestController
 @RequestMapping("/api/files")
 public class FileController {
@@ -539,7 +557,9 @@ public class FileController {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/file/FileAccessService.java
+package com.acme.shop.file;
+
 @Service
 public class FileAccessService {
 
@@ -570,7 +590,7 @@ public class FileAccessService {
 
 CSV експорт на 500 000 поръчки не бива да се сглобява в `byte[]`. `StreamingResponseBody` пише директно в отговора, на отделна нишка, докато JDBC стрийми редовете.
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @GetMapping(value = "/api/orders/export", produces = "text/csv")
 public ResponseEntity<StreamingResponseBody> export(CurrentUser user) {
     StreamingResponseBody body = out -> orderExport.writeCsv(out, user.tenantId());
@@ -581,7 +601,9 @@ public ResponseEntity<StreamingResponseBody> export(CurrentUser user) {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/OrderExportService.java
+package com.acme.shop.order;
+
 @Service
 public class OrderExportService {
 
@@ -637,7 +659,9 @@ flowchart TB
 
 Controller-ът има два метода: `POST /api/uploads` с `@RequestBody @Valid StartUploadRequest`, който връща `PresignedUpload`, и `POST /api/uploads/{id}/confirm`, който връща метаданните на активирания файл. Цялата логика е в service-а.
 
-```java
+```java src/main/java/com/acme/shop/file/dto/
+package com.acme.shop.file.dto;
+
 public record StartUploadRequest(
     @NotBlank @Size(max = 255) String fileName,
     @NotBlank @Pattern(regexp = "image/(jpeg|png|webp)|application/pdf") String contentType,
@@ -646,7 +670,9 @@ public record StartUploadRequest(
 public record PresignedUpload(UUID id, URI url, Duration validFor) {}
 ```
 
-```java
+```java src/main/java/com/acme/shop/file/DirectUploadService.java
+package com.acme.shop.file;
+
 @Service
 public class DirectUploadService {
 
@@ -691,7 +717,9 @@ Presigned PUT фиксира content type и ключа; размерът се �
 
 Thumbnail-ите се правят след качване, не по време на заявката: обработката на 5 MB снимка отнема секунда и може да хвърли `OutOfMemoryError` при няколко паралелни.
 
-```java
+```java src/main/java/com/acme/shop/file/ThumbnailListener.java
+package com.acme.shop.file;
+
 @Component
 public class ThumbnailListener {
 
@@ -729,7 +757,7 @@ public class ThumbnailListener {
 
 ### Временни файлове
 
-```java
+```java src/main/java/com/acme/shop/invoice/InvoiceService.java
 Path tmp = Files.createTempFile("invoice-", ".pdf");
 try {
     pdfGenerator.write(invoice, tmp);
@@ -745,7 +773,7 @@ try {
 
 ### Ресурси от classpath
 
-```java
+```java src/main/java/com/acme/shop/country/CountryService.java
 public CountryService(@Value("classpath:data/countries.csv") Resource countries) throws IOException {
     try (var in = countries.getInputStream()) {
         this.countries = parse(new String(in.readAllBytes(), StandardCharsets.UTF_8));
@@ -759,7 +787,9 @@ public CountryService(@Value("classpath:data/countries.csv") Resource countries)
 
 Снимки на продукти са публични и еднакви за всички; сервирай ги през CDN пред публичен bucket (или bucket с CloudFront origin access), а в базата пази само ключа и строй URL-а с `app.cdn.base-url`. Фактури, лични документи и всичко, което зависи от потребител, минава през приложението или през краткотраен presigned URL (5 минути), издаден след проверка на правата. Никога не слагай лични файлове в публичен bucket, разчитайки, че UUID ключът е "непознат".
 
-```java
+```java src/main/java/com/acme/shop/file/OrphanFileCleanup.java
+package com.acme.shop.file;
+
 @Component
 public class OrphanFileCleanup {
 
@@ -788,7 +818,9 @@ public class OrphanFileCleanup {
 
 ## 10. Тестване
 
-```java
+```java src/test/java/com/acme/shop/product/ProductImageControllerTest.java
+package com.acme.shop.product;
+
 @WebMvcTest(ProductImageController.class)
 @Import(FileExceptionHandler.class)
 class ProductImageControllerTest {
@@ -813,7 +845,9 @@ class ProductImageControllerTest {
 
 `MockMvc` не минава през Tomcat multipart лимитите, затова 413 се тества с mock, който хвърля `MaxUploadSizeExceededException`, а истинският лимит се проверява с един `@SpringBootTest(webEnvironment = RANDOM_PORT)` тест с `RestClient` и реален файл над лимита.
 
-```java
+```java src/test/java/com/acme/shop/common/storage/S3StorageServiceIT.java
+package com.acme.shop.common.storage;
+
 @SpringBootTest
 @Testcontainers
 class S3StorageServiceIT {

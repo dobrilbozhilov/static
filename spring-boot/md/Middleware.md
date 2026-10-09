@@ -15,7 +15,7 @@
 
 Filter-ите и interceptor-ите идват със `spring-boot-starter-web`. За AOP трябва `spring-boot-starter-aop`, а за rate limiting ползваме Bucket4j.
 
-```xml
+```xml pom.xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-web</artifactId>
@@ -31,7 +31,7 @@ Filter-ите и interceptor-ите идват със `spring-boot-starter-web`.
 </dependency>
 ```
 
-```yaml
+```yaml src/main/resources/application.yml
 spring:
   threads:
     virtual:
@@ -88,8 +88,8 @@ flowchart LR
 
 `OncePerRequestFilter` гарантира едно изпълнение на request, дори при forward към `/error` или async dispatch. Регистрацията като `@Component` го слага в chain-а за всички URL-и.
 
-```java
-package com.example.orders.web.filter;
+```java src/main/java/com/acme/shop/common/web/ServerHeaderFilter.java
+package com.acme.shop.common.web;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -127,10 +127,10 @@ public class ServerHeaderFilter extends OncePerRequestFilter {
 
 Когато filter-ът трябва да важи само за определени пътища, или искаш пълен контрол върху реда, го регистрираш през `FilterRegistrationBean` вместо с `@Component`.
 
-```java
-package com.example.orders.config;
+```java src/main/java/com/acme/shop/common/config/FilterConfig.java
+package com.acme.shop.common.config;
 
-import com.example.orders.web.filter.RateLimitFilter;
+import com.acme.shop.common.web.RateLimitFilter;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -155,8 +155,8 @@ public class FilterConfig {
 
 Всеки request трябва да има id, който се появява във всеки лог ред и се връща на клиента, за да може support да намери точно този request. Ако upstream (gateway, друг сървис) вече е пратил `X-Request-Id`, го преизползваме.
 
-```java
-package com.example.orders.web.filter;
+```java src/main/java/com/acme/shop/common/web/RequestIdFilter.java
+package com.acme.shop.common.web;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -206,14 +206,14 @@ public class RequestIdFilter extends OncePerRequestFilter {
 }
 ```
 
-`finally` с `MDC.remove` е задължително: Tomcat преизползва platform thread-овете, а с virtual threads MDC пак е thread-local и ще протече в следващия request без него. С `logging.pattern.level` от секция 1 всеки ред ще изглежда така: `INFO [3f9c...] c.e.o.OrderService : Created order 42`. Как MDC стига до JSON логовете и как се пренася към `@Async` и Kafka е описано в [Logging](Logging.md).
+`finally` с `MDC.remove` е задължително: Tomcat преизползва platform thread-овете, а с virtual threads MDC пак е thread-local и ще протече в следващия request без него. С `logging.pattern.level` от секция 1 всеки ред ще изглежда така: `INFO [3f9c...] c.a.s.o.OrderService : Created order 42`. Как MDC стига до JSON логовете и как се пренася към `@Async` и Kafka е описано в [Logging](Logging.md).
 
 ## 7. HandlerInterceptor: timing и audit
 
 Interceptor-ът знае кой метод ще се изпълни. Това го прави правилното място за audit по endpoint, защото можеш да прочетеш custom анотация от `HandlerMethod`.
 
-```java
-package com.example.orders.web.audit;
+```java src/main/java/com/acme/shop/common/aop/Audited.java
+package com.acme.shop.common.aop;
 
 import java.lang.annotation.*;
 
@@ -224,9 +224,10 @@ public @interface Audited {
 }
 ```
 
-```java
-package com.example.orders.web.audit;
+```java src/main/java/com/acme/shop/common/web/AuditInterceptor.java
+package com.acme.shop.common.web;
 
+import com.acme.shop.common.aop.Audited;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
@@ -266,10 +267,10 @@ public class AuditInterceptor implements HandlerInterceptor {
 }
 ```
 
-```java
-package com.example.orders.config;
+```java src/main/java/com/acme/shop/common/config/WebConfig.java
+package com.acme.shop.common.config;
 
-import com.example.orders.web.audit.AuditInterceptor;
+import com.acme.shop.common.web.AuditInterceptor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -304,16 +305,16 @@ public class WebConfig implements WebMvcConfigurer {
 
 | Израз | Какво хваща |
 |---|---|
-| `execution(* com.example.orders.service.*.*(..))` | всеки public метод във всеки клас в пакета |
-| `execution(public * com.example..*Service.*(..))` | всеки метод на клас с име, завършващо на `Service`, във всеки подпакет |
-| `@annotation(com.example.orders.aop.Timed)` | методи с анотация `@Timed` |
-| `within(com.example.orders.web..*)` | всички методи в класове от пакета и подпакетите |
+| `execution(* com.acme.shop.order.*.*(..))` | всеки public метод във всеки клас в пакета |
+| `execution(public * com.acme.shop..*Service.*(..))` | всеки метод на клас с име, завършващо на `Service`, във всеки подпакет |
+| `@annotation(com.acme.shop.common.aop.Timed)` | методи с анотация `@Timed` |
+| `within(com.acme.shop.common.web..*)` | всички методи в класове от пакета и подпакетите |
 | `@within(org.springframework.stereotype.Service)` | всички методи на класове, анотирани със `@Service` |
 
 ### Custom анотация и @Around
 
-```java
-package com.example.orders.aop;
+```java src/main/java/com/acme/shop/common/aop/Timed.java
+package com.acme.shop.common.aop;
 
 import java.lang.annotation.*;
 
@@ -325,8 +326,8 @@ public @interface Timed {
 }
 ```
 
-```java
-package com.example.orders.aop;
+```java src/main/java/com/acme/shop/common/aop/TimedAspect.java
+package com.acme.shop.common.aop;
 
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
@@ -363,7 +364,7 @@ public class TimedAspect {
 
 `@annotation(timed)` свързва анотацията директно като параметър, така че не ти трябва reflection. Употреба:
 
-```java
+```java src/main/java/com/acme/shop/order/OrderService.java
 @Service
 public class OrderService {
 
@@ -381,7 +382,7 @@ public class OrderService {
 
 Spring AOP работи през proxy: контейнерът инжектира не твоя `OrderService`, а proxy обект, който обвива всяко извикване и вътре в него вика истинския метод. Това означава, че aspect-ът се изпълнява само когато извикването мине през proxy-то, тоест когато идва отвън.
 
-```java
+```java src/main/java/com/acme/shop/order/OrderService.java
 @Service
 public class OrderService {
 
@@ -423,8 +424,8 @@ CORS не е security механизъм за API-то, а правило на �
 
 `CorsProperties` по-долу е `@ConfigurationProperties(prefix = "app.cors")` record с `List<String> allowedOrigins`, за да са origin-ите различни по profile, виж [Конфигурация и профили](Configuration_Profiles.md).
 
-```java
-package com.example.orders.config;
+```java src/main/java/com/acme/shop/common/config/CorsConfig.java
+package com.acme.shop.common.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -454,7 +455,7 @@ public class CorsConfig {
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 @Bean
 SecurityFilterChain api(HttpSecurity http) throws Exception {
     http
@@ -470,7 +471,7 @@ SecurityFilterChain api(HttpSecurity http) throws Exception {
 
 `http.cors(Customizer.withDefaults())` намира bean-а `CorsConfigurationSource` по тип. Ако нямаш Security, същата конфигурация се прави през `WebMvcConfigurer`:
 
-```java
+```java src/main/java/com/acme/shop/common/config/WebConfig.java
 @Override
 public void addCorsMappings(CorsRegistry registry) {
     registry.addMapping("/api/**")
@@ -487,8 +488,8 @@ public void addCorsMappings(CorsRegistry registry) {
 
 Token bucket: всеки ключ (IP или API key) има кофа с капацитет N, която се пълни с N токена на период. Всеки request консумира един. In-memory вариантът е достатъчен за един инстанс и за защита срещу груба злоупотреба.
 
-```java
-package com.example.orders.web.filter;
+```java src/main/java/com/acme/shop/common/web/RateLimitFilter.java
+package com.acme.shop.common.web;
 
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
@@ -594,8 +595,8 @@ X-RateLimit-Remaining: 0
 
 Body-то на request-а е stream и може да се прочете веднъж. Ако filter-ът го прочете, controller-ът получава празно тяло. `ContentCachingRequestWrapper` буферира каквото се чете надолу по веригата, а `ContentCachingResponseWrapper` буферира отговора и трябва изрично да го копираш обратно.
 
-```java
-package com.example.orders.web.filter;
+```java src/main/java/com/acme/shop/common/web/BodyLoggingFilter.java
+package com.acme.shop.common.web;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -666,7 +667,7 @@ Spring Security се регистрира като един servlet filter (`Fil
 | Filter след Security, с `SecurityContext` (audit по потребител, tenant) | `@Order` по-голям от `-100` |
 | Filter вътре в security chain-а (custom token, API key) | `http.addFilterBefore(filter, BearerTokenAuthenticationFilter.class)` |
 
-```java
+```java src/main/java/com/acme/shop/common/config/SecurityConfig.java
 @Bean
 SecurityFilterChain api(HttpSecurity http, ApiKeyAuthFilter apiKeyFilter) throws Exception {
     http
@@ -690,8 +691,8 @@ Filter-ът `ApiKeyAuthFilter` тук не трябва да е `@Component`, и
 
 Малък helper, който се преизползва от всички filter-и:
 
-```java
-package com.example.orders.web.filter;
+```java src/main/java/com/acme/shop/common/web/ProblemWriter.java
+package com.acme.shop.common.web;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
@@ -738,7 +739,9 @@ public class ProblemWriter {
 
 `WebMvcConfigurer` е централната точка за настройка на MVC без да губиш auto-configuration. Имплементираш само методите, които ти трябват.
 
-```java
+```java src/main/java/com/acme/shop/common/config/WebConfig.java
+package com.acme.shop.common.config;
+
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
@@ -790,11 +793,11 @@ public class WebConfig implements WebMvcConfigurer {
 
 `@CurrentUser` е празна анотация с `@Target(ElementType.PARAMETER)` и `@Retention(RetentionPolicy.RUNTIME)`.
 
-```java
-package com.example.orders.web.resolver;
+```java src/main/java/com/acme/shop/common/web/CurrentUserArgumentResolver.java
+package com.acme.shop.common.web;
 
-import com.example.orders.user.UserAccount;
-import com.example.orders.user.UserAccountRepository;
+import com.acme.shop.user.UserAccount;
+import com.acme.shop.user.UserAccountRepository;
 import org.springframework.core.MethodParameter;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -831,7 +834,7 @@ public class CurrentUserArgumentResolver implements HandlerMethodArgumentResolve
 }
 ```
 
-```java
+```java src/main/java/com/acme/shop/order/OrderController.java
 @GetMapping("/api/orders/mine")
 public List<OrderSummary> myOrders(@CurrentUser UserAccount user) {
     return orderService.findByCustomer(user.getId());
