@@ -1,0 +1,46 @@
+/* Симулатор на event loop и демата за кадри */
+.ls { display: grid; gap: 12px; }
+.ls-right { display: grid; gap: 10px; align-content: start; }
+.ls-phases { display: flex; flex-wrap: wrap; gap: 4px; }
+.ls-phase { font: 600 11px/1 var(--mono); padding: 5px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); background: var(--surface); }
+.ls-phase:not(:last-child)::after { content: " →"; opacity: 0.5; }
+.ls-phase.active { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); }
+.ls-panel { transition: box-shadow 0.2s; }
+.ls-panel.hot { box-shadow: 0 0 0 2px var(--accent); }
+.ls-stack { display: flex; flex-direction: column-reverse; gap: 4px; min-height: 110px; justify-content: flex-start; }
+.ls-list, .ls-queue { display: flex; flex-wrap: wrap; gap: 4px; min-height: 34px; align-items: center; }
+.ls-queue .ls-item:not(:last-child)::after { content: "→"; margin-left: 6px; color: var(--muted); }
+.ls-item { display: inline-block; font: 600 12px/1.2 var(--mono); padding: 6px 8px; border-radius: 6px; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); overflow-wrap: anywhere; }
+.ls-frame { display: block; }
+.ls-frame.top { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.ls-api { border-color: var(--info); background: var(--info-soft); color: var(--info); }
+.ls-m { border-color: var(--purple); background: var(--purple-soft); color: var(--purple); }
+.ls-t { border-color: var(--warn); background: var(--warn-soft); color: var(--warn); }
+.ls-empty { font: 12px var(--mono); color: var(--muted); opacity: 0.7; }
+.ls-console { font: 12.5px/1.6 var(--mono); min-height: 34px; }
+.ls-out.fresh { color: var(--ok); font-weight: 700; }
+.ls .w-code-lines { max-height: 420px; }
+
+/* Викторина за микрозадачи */
+.mq-choices, .mq-answer { display: flex; flex-wrap: wrap; gap: 6px; min-height: 36px; align-items: center; }
+.mq-answer .ls-item { cursor: pointer; }
+.mq-answer .ls-item.right { border-color: var(--ok); background: var(--ok-soft); color: var(--ok); }
+.mq-answer .ls-item.wrong { border-color: var(--bad); background: var(--bad-soft); color: var(--bad); }
+.mq-answer .ls-item:not(:last-child)::after { content: "→"; margin-left: 6px; color: var(--muted); }
+.mq-slot { font: 600 11px var(--mono); color: var(--muted); }
+
+/* Кадри: маркери за vsync */
+.ft-vsync { position: relative; height: 18px; }
+.ft-tick { position: absolute; top: 0; width: 2px; height: 100%; background: var(--muted); }
+.ft-tick.missed { background: var(--bad); }
+.ft-tick::after { content: attr(data-label); position: absolute; top: -2px; left: 4px; font: 600 10px var(--mono); color: var(--muted); white-space: nowrap; }
+.ft-tick.missed::after { color: var(--bad); }
+.w-track-seg.hot { outline: 2px solid var(--ink); outline-offset: -1px; }
+
+/* Спинери за демото с дългата задача */
+.lt-box { display: grid; place-items: center; gap: 8px; }
+.lt-spin { width: 56px; height: 56px; border-radius: 12px; background: var(--accent); }
+.lt-spin.css { animation: lt-rot 1.4s linear infinite; }
+@keyframes lt-rot { to { transform: rotate(360deg); } }
+.lt-spin.js { background: var(--warn); }
+.lt-frozen { color: var(--bad); font-weight: 700; }

@@ -1,0 +1,36 @@
+{
+  "title": "React",
+  "lead": "Как работи React под капака, обяснено така, че да се разбере и от дете, но с достатъчно детайли, за да е полезно на програмист. Всяка страница има интерактивна симулация или истинско React демо, което можеш да движиш стъпка по стъпка, плюс текст, който обяснява какво точно се случва и защо.",
+  "pages": [
+    { "file": "Fiber.md", "slug": "fiber", "group": "Под капака", "short": "Какво е Fiber", "blurb": "Защо React пренаписа ядрото си, какво е един fiber възел и какви полета носи." },
+    { "file": "Linked_List.md", "slug": "linked-list", "group": "Под капака", "short": "Свързан списък", "blurb": "child, sibling, return: как React обхожда дървото без рекурсия и защо това позволява пауза." },
+    { "file": "Render_Phase.md", "slug": "render-phase", "group": "Под капака", "short": "Render Phase", "blurb": "beginWork и completeWork, reconciliation с key, флагове за промени. Чиста и прекъсваема фаза." },
+    { "file": "Commit_Phase.md", "slug": "commit-phase", "group": "Под капака", "short": "Commit Phase", "blurb": "Before mutation, mutation, layout и passive effects: кога DOM-ът наистина се променя." },
+    { "file": "Double_Buffering.md", "slug": "double-buffering", "group": "Под капака", "short": "Double Buffering", "blurb": "current и workInProgress дървета, alternate указатели и смяната на root.current." },
+
+    { "file": "Time_Slicing.md", "slug": "time-slicing", "group": "Конкурентност", "short": "Time Slicing", "blurb": "Работа на порции от 5 ms, shouldYield и MessageChannel: как React пуска браузъра да диша." },
+    { "file": "Concurrent_React.md", "slug": "concurrent", "group": "Конкурентност", "short": "Concurrent React", "blurb": "Lanes и приоритети, прекъсване на рендер, изхвърляне на незавършена работа и рестарт." },
+    { "file": "useTransition.md", "slug": "use-transition", "group": "Конкурентност", "short": "useTransition", "blurb": "Маркиране на бавни обновления като transition, isPending и защо полето за писане остава живо." },
+    { "file": "useDeferredValue.md", "slug": "use-deferred-value", "group": "Конкурентност", "short": "useDeferredValue", "blurb": "Отложена стойност, изоставане и разликата спрямо debounce и useTransition." },
+    { "file": "Automatic_Batching.md", "slug": "batching", "group": "Конкурентност", "short": "Automatic Batching", "blurb": "Няколко setState, един рендер: React 17 срещу React 18 и кога flushSync е нужен." },
+
+    { "file": "Lifecycle.md", "slug": "lifecycle", "group": "Жизнен цикъл", "short": "Жизнен цикъл", "blurb": "Mount, update, unmount за класов и функционален компонент, с истински лог на реда на извикване." },
+    { "file": "Hooks_vs_Class.md", "slug": "hooks-vs-class", "group": "Жизнен цикъл", "short": "Hooks срещу класове", "blurb": "getDerivedStateFromProps, shouldComponentUpdate, componentDidCatch и как hooks ги възпроизвеждат." },
+    { "file": "Effects_Timing.md", "slug": "effects-timing", "group": "Жизнен цикъл", "short": "useLayoutEffect и useEffect", "blurb": "Кога точно се изпълнява всеки ефект спрямо paint, редът деца преди родители и cleanup." },
+    { "file": "Rerenders.md", "slug": "rerenders", "group": "Жизнен цикъл", "short": "Кога се пререндерира", "blurb": "State, родител, context: кое наистина предизвиква рендер и кое не." },
+
+    { "file": "React_memo.md", "slug": "react-memo", "group": "Производителност", "short": "React.memo", "blurb": "Плитко сравнение на props и защо inline обект или функция чупи мемоизацията." },
+    { "file": "useMemo_useCallback.md", "slug": "usememo-usecallback", "group": "Производителност", "short": "useMemo и useCallback", "blurb": "Реалната им цена, кога са излишни и решавач дали изобщо ти трябват." },
+    { "file": "Code_Splitting.md", "slug": "code-splitting", "group": "Производителност", "short": "Code Splitting", "blurb": "React.lazy, Suspense и динамичен import(): как се свива началният bundle." },
+    { "file": "Virtualization.md", "slug": "virtualization", "group": "Производителност", "short": "Виртуализация", "blurb": "Рендериране само на видимите редове: 100 000 елемента без да умре браузърът." },
+    { "file": "Profiling.md", "slug": "profiling", "group": "Производителност", "short": "Профилиране", "blurb": "React DevTools Profiler: flamegraph, ranked, защо се рендерира, плюс Chrome Performance." },
+
+    { "file": "Event_Loop.md", "slug": "event-loop", "group": "Event Loop", "short": "Event Loop", "blurb": "Call stack, Web APIs и опашката със задачи: симулатор стъпка по стъпка." },
+    { "file": "Microtasks.md", "slug": "microtasks", "group": "Event Loop", "short": "Микро и макро задачи", "blurb": "Promise, queueMicrotask, setTimeout: предскажи реда, после го провери." },
+    { "file": "Rendering_Pipeline.md", "slug": "rendering-pipeline", "group": "Event Loop", "short": "Кадри и рендериране", "blurb": "16.7 ms на кадър, requestAnimationFrame, дълги задачи и защо React планира с MessageChannel." }
+  ],
+  "external": [
+    { "label": "react.dev", "href": "https://react.dev" },
+    { "label": "React Fiber Architecture (acdlite)", "href": "https://github.com/acdlite/react-fiber-architecture" }
+  ]
+}

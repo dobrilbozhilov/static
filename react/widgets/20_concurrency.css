@@ -1,0 +1,6 @@
+/* Списъци за демата useTransition и useDeferredValue */
+.cc-list { max-height: 240px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); font: 12.5px/1.5 var(--mono); transition: opacity 0.15s; }
+.cc-stale .cc-list { opacity: 0.45; }
+.cc-row { padding: 2px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cc-row:last-child { border-bottom: 0; }
+.cc-empty { padding: 12px; color: var(--muted); }

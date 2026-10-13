@@ -1,0 +1,13 @@
+/* Profiler модел (46_flamegraph.js) */
+.pf-commits { display: flex; gap: 6px; align-items: flex-end; }
+.pf-commit { display: grid; justify-items: center; gap: 3px; border: 1px solid var(--line); background: var(--bg); border-radius: 6px; padding: 4px 6px 2px; cursor: pointer; width: 34px; }
+.pf-commit i { display: block; width: 14px; border-radius: 2px; align-self: end; }
+.pf-commit span { font: 600 10.5px var(--mono); color: var(--muted); }
+.pf-commit.active { border-color: var(--accent); background: var(--accent-soft); }
+.pf-commit.active span { color: var(--accent); }
+.pf-svg text { pointer-events: none; }
+.pf-ranked { display: grid; gap: 4px; }
+.pf-rank { position: relative; height: 24px; border-radius: 4px; background: var(--surface-2); overflow: hidden; cursor: pointer; border: 1px solid transparent; }
+.pf-rank i { position: absolute; left: 0; top: 0; bottom: 0; }
+.pf-rank span { position: absolute; left: 8px; top: 0; line-height: 22px; font: 600 11.5px/22px var(--mono); color: var(--ink); white-space: pre; }
+.pf-rank.selected { border-color: var(--accent); }

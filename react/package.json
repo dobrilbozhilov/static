@@ -1,0 +1,13 @@
+{
+  "name": "react-handbook",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "Builds dist/ from the markdown documents in md/ and the interactive widgets in widgets/",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "marked": "^15.0.12"
+  }
+}

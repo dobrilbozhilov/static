@@ -1,0 +1,8 @@
+/* Виртуализиран списък (45_virtual_list.js) */
+.vl-viewport { position: relative; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.vl-inner { position: relative; width: 100%; }
+.vl-row { position: absolute; left: 0; right: 0; height: 36px; display: flex; align-items: center; gap: 12px; padding: 0 12px; border-bottom: 1px solid var(--line); font-size: 13.5px; box-sizing: border-box; }
+.vl-row:nth-child(odd) { background: var(--surface); }
+.vl-idx { font: 500 12px var(--mono); color: var(--muted); min-width: 7ch; }
+.vl-map { position: relative; flex: 1; height: 14px; min-width: 120px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.vl-map i { position: absolute; top: 0; bottom: 0; background: var(--accent); border-radius: 999px; transition: left 0.05s, width 0.05s; }
