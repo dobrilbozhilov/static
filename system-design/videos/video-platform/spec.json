@@ -1,0 +1,876 @@
+{
+ "intro": {
+  "chapter": "Intro",
+  "kicker": "System Design · Flow walkthrough",
+  "title": "Video platform<br><em>Udemy / Netflix-style</em>",
+  "subtitle": "Upload gigabytes, transcode asynchronously, stream from the CDN: no application server ever touches a video byte.",
+  "chips": [
+   {
+    "text": "API Gateway",
+    "kind": "sync"
+   },
+   {
+    "text": "Upload Service",
+    "kind": "sync"
+   },
+   {
+    "text": "Course / Metadata Service",
+    "kind": "sync"
+   },
+   {
+    "text": "Raw & Processed S3",
+    "kind": "async"
+   },
+   {
+    "text": "SQS / Kafka",
+    "kind": "async"
+   },
+   {
+    "text": "Transcoding Workers · FFmpeg",
+    "kind": "async"
+   },
+   {
+    "text": "CDN + signed URL",
+    "kind": "read"
+   },
+   {
+    "text": "DRM License Service",
+    "kind": "read"
+   },
+   {
+    "text": "Progress Service · Redis",
+    "kind": "read"
+   }
+  ],
+  "cues": [
+   {
+    "cap": "Designing a video platform in the style of Udemy or Netflix, flow by flow."
+   },
+   {
+    "cap": "Three flows: uploading, which is rare but huge; transcoding, which is heavy and asynchronous; and watching, which is constant, around 70 Gbps. Let's follow one lesson from the instructor's laptop to the student's player.",
+    "say": "Three flows: uploading, which is rare but huge; transcoding, which is heavy and asynchronous; and watching, which is constant, around seventy gigabits per second. Let's follow one lesson from the instructor's laptop to the student's player."
+   }
+  ]
+ },
+ "nodes": [
+  {
+   "id": "client",
+   "label": "Client",
+   "sub": "player / browser",
+   "type": "client",
+   "x": 150,
+   "y": 370
+  },
+  {
+   "id": "gw",
+   "label": "API Gateway",
+   "sub": "auth · rate limit",
+   "x": 390,
+   "y": 230
+  },
+  {
+   "id": "upload",
+   "label": "Upload Service",
+   "sub": "presigned URL",
+   "x": 620,
+   "y": 230
+  },
+  {
+   "id": "meta",
+   "label": "Course / Metadata\nService",
+   "sub": "courses · rights",
+   "x": 890,
+   "y": 230
+  },
+  {
+   "id": "metadb",
+   "label": "Postgres",
+   "sub": "metadata",
+   "type": "store",
+   "x": 1140,
+   "y": 230
+  },
+  {
+   "id": "raw",
+   "label": "Raw Bucket",
+   "sub": "S3 · originals",
+   "type": "store",
+   "x": 620,
+   "y": 370
+  },
+  {
+   "id": "progress",
+   "label": "Progress\nService",
+   "sub": "write-behind",
+   "x": 390,
+   "y": 510
+  },
+  {
+   "id": "queue",
+   "label": "SQS / Kafka",
+   "sub": "video-uploaded",
+   "type": "broker",
+   "x": 620,
+   "y": 510
+  },
+  {
+   "id": "transcode",
+   "label": "Transcoding\nWorkers",
+   "sub": "FFmpeg · chunked",
+   "x": 890,
+   "y": 510
+  },
+  {
+   "id": "redis",
+   "label": "Redis",
+   "sub": "progress",
+   "type": "store",
+   "x": 390,
+   "y": 650
+  },
+  {
+   "id": "processed",
+   "label": "Processed Bucket",
+   "sub": "HLS · thumbnails",
+   "type": "store",
+   "x": 620,
+   "y": 650
+  },
+  {
+   "id": "cdn",
+   "label": "CDN",
+   "sub": "edge cache",
+   "type": "external",
+   "x": 390,
+   "y": 790
+  },
+  {
+   "id": "drm",
+   "label": "DRM License\nService",
+   "sub": "Widevine · FairPlay",
+   "x": 1140,
+   "y": 790
+  }
+ ],
+ "lanes": [
+  {
+   "text": "ASYNC · TRANSCODE",
+   "x": 1240,
+   "y": 520,
+   "kind": "async",
+   "anchor": "end"
+  },
+  {
+   "text": "WATCH PATH",
+   "x": 760,
+   "y": 795,
+   "kind": "read"
+  }
+ ],
+ "edges": [
+  {
+   "id": "cg",
+   "from": "client",
+   "to": "gw",
+   "label": "HTTPS REST"
+  },
+  {
+   "id": "gu",
+   "from": "gw",
+   "to": "upload",
+   "label": "gRPC"
+  },
+  {
+   "id": "um",
+   "from": "upload",
+   "to": "meta",
+   "label": "gRPC"
+  },
+  {
+   "id": "mdb",
+   "from": "meta",
+   "to": "metadb",
+   "label": "SQL"
+  },
+  {
+   "id": "ur",
+   "from": "upload",
+   "to": "raw",
+   "label": "sign URL",
+   "dx": 66
+  },
+  {
+   "id": "cr",
+   "from": "client",
+   "to": "raw",
+   "label": "multipart PUT",
+   "at": 0.62
+  },
+  {
+   "id": "rq",
+   "from": "raw",
+   "to": "queue",
+   "label": "ObjectCreated",
+   "dash": true,
+   "dx": -84
+  },
+  {
+   "id": "qt",
+   "from": "queue",
+   "to": "transcode",
+   "label": "pull",
+   "dash": true
+  },
+  {
+   "id": "tr",
+   "from": "transcode",
+   "to": "raw",
+   "label": "GET chunks",
+   "at": 0.33
+  },
+  {
+   "id": "tp",
+   "from": "transcode",
+   "to": "processed",
+   "label": "PUT segments",
+   "at": 0.5
+  },
+  {
+   "id": "tm",
+   "from": "transcode",
+   "to": "meta",
+   "label": "READY",
+   "dash": true,
+   "kind": "async",
+   "dx": -56
+  },
+  {
+   "id": "gm",
+   "from": "gw",
+   "to": "meta",
+   "label": "GET /videos/:id",
+   "via": [
+    [
+     390,
+     165
+    ],
+    [
+     890,
+     165
+    ]
+   ],
+   "at": 0.5
+  },
+  {
+   "id": "pc",
+   "from": "processed",
+   "to": "cdn",
+   "label": "origin pull",
+   "kind": "read",
+   "at": 0.5,
+   "dy": -14
+  },
+  {
+   "id": "cc",
+   "from": "client",
+   "to": "cdn",
+   "label": "GET segments",
+   "kind": "read",
+   "via": [
+    [
+     150,
+     790
+    ]
+   ],
+   "at": 0.3,
+   "dx": 60
+  },
+  {
+   "id": "cd",
+   "from": "client",
+   "to": "drm",
+   "label": "license request",
+   "kind": "read",
+   "via": [
+    [
+     250,
+     880
+    ],
+    [
+     1140,
+     880
+    ]
+   ],
+   "at": 0.6
+  },
+  {
+   "id": "dm",
+   "from": "drm",
+   "to": "meta",
+   "label": "check right",
+   "kind": "read",
+   "via": [
+    [
+     1140,
+     370
+    ]
+   ],
+   "at": 0.25,
+   "dx": 60
+  },
+  {
+   "id": "gp",
+   "from": "gw",
+   "to": "progress",
+   "label": "gRPC",
+   "kind": "read",
+   "at": 0.72,
+   "dx": 40
+  },
+  {
+   "id": "pr",
+   "from": "progress",
+   "to": "redis",
+   "label": "SET",
+   "kind": "read",
+   "dx": 40
+  }
+ ],
+ "scenes": [
+  {
+   "id": "arch",
+   "chapter": "Architecture",
+   "kicker": "01 · The map",
+   "title": "Six services, three flows, zero video bytes",
+   "steps": [
+    {
+     "cap": "The upload path: the browser asks API Gateway and Upload Service for a presigned URL, Course / Metadata Service records the video in Postgres, and the file goes straight to the Raw Bucket in S3.",
+     "say": "The upload path: the browser asks A P I Gateway and Upload Service for a presigned U R L, Course Metadata Service records the video in Postgres, and the file goes straight to the Raw Bucket in S three.",
+     "focus": [
+      "client",
+      "gw",
+      "upload",
+      "meta",
+      "metadb",
+      "raw"
+     ],
+     "title": "Upload path",
+     "proto": [
+      "HTTPS REST",
+      "gRPC",
+      "SQL",
+      "presigned PUT"
+     ],
+     "note": "Thin requests only. The 4 GB file travels <b>browser → S3</b>; our servers never see its bytes."
+    },
+    {
+     "cap": "The transcoding path is asynchronous: an S3 event lands in SQS or Kafka, Transcoding Workers pull jobs, run FFmpeg in parallel and write HLS segments to the Processed Bucket.",
+     "say": "The transcoding path is asynchronous: an S three event lands in S Q S or Kafka, Transcoding Workers pull jobs, run F F m peg in parallel and write H L S segments to the Processed Bucket.",
+     "focus": [
+      "raw",
+      "queue",
+      "transcode",
+      "processed",
+      "meta"
+     ],
+     "tone": "async",
+     "title": "Transcoding path",
+     "proto": [
+      "S3 event",
+      "queue · pull",
+      "FFmpeg",
+      "gRPC READY"
+     ],
+     "note": "The instructor waits only until <b>uploaded</b>, never until <b>ready</b>. The queue depth drives the size of the worker pool."
+    },
+    {
+     "cap": "The watch path never passes through the application servers: a signed URL, manifest and segments from the CDN, a key from DRM License Service, and playback progress written to Redis.",
+     "say": "The watch path never passes through the application servers: a signed U R L, manifest and segments from the C D N, a key from D R M License Service, and playback progress written to Redis.",
+     "focus": [
+      "client",
+      "cdn",
+      "processed",
+      "drm",
+      "progress",
+      "redis"
+     ],
+     "tone": "read",
+     "title": "Watch path",
+     "proto": [
+      "signed URL",
+      "CDN · HLS",
+      "DRM license",
+      "Redis write-behind"
+     ],
+     "note": "70 Gbps of segments come from CDN edges. The app servers answer only <b>who may watch what</b> and <b>where you stopped</b>."
+    }
+   ]
+  },
+  {
+   "id": "upload",
+   "chapter": "Upload a lesson",
+   "kicker": "02 · Scenario 1",
+   "title": "Uploading a 4 GB lesson",
+   "steps": [
+    {
+     "cap": "The instructor picks a 4 GB file and clicks Upload. The browser sends POST /videos/upload with the title and size; API Gateway authenticates the user and forwards the call over gRPC to Upload Service.",
+     "say": "The instructor picks a four gigabyte file and clicks Upload. The browser sends post slash videos slash upload with the title and size; A P I Gateway authenticates the user and forwards the call over G R P C to Upload Service.",
+     "edges": [
+      "cg",
+      "gu"
+     ],
+     "title": "Client → API Gateway → Upload Service",
+     "proto": [
+      "HTTPS REST",
+      "gRPC"
+     ],
+     "code": "POST /videos/upload\nAuthorization: Bearer …\n{ course: 'c_31', title: 'Lesson 12',\n  size: 4294967296 }\n\n→ gRPC Upload.Start(user, course, title, size)",
+     "note": "Only metadata travels here: a few hundred bytes, not the file."
+    },
+    {
+     "cap": "Upload Service creates the video record through Course / Metadata Service, stored in Postgres with state UPLOADING. The state machine of the video starts here.",
+     "say": "Upload Service creates the video record through Course Metadata Service, stored in Postgres with state uploading. The state machine of the video starts here.",
+     "edges": [
+      "um",
+      "mdb"
+     ],
+     "proto": [
+      "gRPC",
+      "SQL"
+     ],
+     "code": "gRPC Metadata.CreateVideo(course: 'c_31', title)\n\nINSERT INTO videos (id, course_id, state)\nVALUES ('v_812', 'c_31', 'UPLOADING');",
+     "mark": {
+      "node": "metadb",
+      "text": "v_812 UPLOADING",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "Then it asks S3 for a presigned multipart URL: a temporary link that lets exactly this client write exactly this key in the Raw Bucket for the next few minutes.",
+     "say": "Then it asks S three for a presigned multipart U R L: a temporary link that lets exactly this client write exactly this key in the Raw Bucket for the next few minutes.",
+     "edges": [
+      "ur"
+     ],
+     "proto": [
+      "HTTPS · S3 API",
+      "presigned URL · 15 min"
+     ],
+     "code": "s3.createMultipartUpload(\n  { Bucket: 'raw', Key: 'v_812.mp4' })\n→ uploadId\npresign PUT raw/v_812.mp4\n  ?partNumber=N&uploadId=…  expires: 900 s",
+     "note": "The signature binds bucket, key and expiry, so the link is useless for any other object.",
+     "mark": {
+      "node": "raw",
+      "text": "key reserved",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "The URL goes back to the browser. From here on our servers are out of the loop.",
+     "say": "The U R L goes back to the browser. From here on our servers are out of the loop.",
+     "edges": [
+      "-gu",
+      "-cg"
+     ],
+     "tone": "good",
+     "title": "Upload Service → Client",
+     "proto": [
+      "HTTP 200"
+     ],
+     "code": "200 OK\n{ video: 'v_812', uploadId: 'Yx…',\n  partSize: 8388608, urls: [ … ] }",
+     "mark": {
+      "node": "client",
+      "text": "presigned URL",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "The browser uploads the file in 8 MB parts directly to S3 over HTTPS. If the connection drops, it resumes from the last confirmed part: a resumable upload that costs us no bandwidth at all.",
+     "say": "The browser uploads the file in eight megabyte parts directly to S three over H T T P S. If the connection drops, it resumes from the last confirmed part: a resumable upload that costs us no bandwidth at all.",
+     "edges": [
+      "cr"
+     ],
+     "title": "Client → Raw Bucket (S3)",
+     "proto": [
+      "HTTPS PUT · multipart",
+      "resumable"
+     ],
+     "code": "PUT raw/v_812.mp4?partNumber=37&uploadId=…\n→ 200  ETag: \"a9f3…\"\n…\nCompleteMultipartUpload(parts: 1 … 512)",
+     "mark": {
+      "node": "raw",
+      "text": "512 parts ✓",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "When the last part lands, S3 itself emits an ObjectCreated event into the video-uploaded queue, and the record moves to UPLOADED. The instructor sees 'processing', because the UI reads exactly that field.",
+     "say": "When the last part lands, S three itself emits an Object Created event into the video uploaded queue, and the record moves to uploaded. The instructor sees processing, because the U I reads exactly that field.",
+     "edges": [
+      "rq"
+     ],
+     "focus": [
+      "metadb"
+     ],
+     "tone": "async",
+     "title": "S3 → queue",
+     "proto": [
+      "s3:ObjectCreated",
+      "SQS / Kafka · video-uploaded"
+     ],
+     "code": "s3:ObjectCreated:CompleteMultipartUpload\n→ video-uploaded\n{ bucket: 'raw', key: 'v_812.mp4',\n  size: 4294967296 }\n\nUPDATE videos SET state = 'UPLOADED'\n WHERE id = 'v_812';",
+     "marks": [
+      {
+       "node": "queue",
+       "text": "1 job",
+       "kind": "async"
+      },
+      {
+       "node": "metadb",
+       "text": "UPLOADED",
+       "kind": "sync"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "transcode",
+   "chapter": "Transcoding",
+   "kicker": "03 · Scenario 2",
+   "title": "Transcoding: fan-out, fan-in, READY",
+   "steps": [
+    {
+     "cap": "The first free Transcoding Worker pulls the message. Pull, not push: a worker takes a job only when it has a free slot, so 1 000 simultaneous uploads do not crash the pool, they simply wait in the queue.",
+     "say": "The first free Transcoding Worker pulls the message. Pull, not push: a worker takes a job only when it has a free slot, so a thousand simultaneous uploads do not crash the pool, they simply wait in the queue.",
+     "edges": [
+      "qt"
+     ],
+     "tone": "async",
+     "proto": [
+      "SQS / Kafka · pull",
+      "backpressure"
+     ],
+     "code": "receiveMessage(video-uploaded, max: 1)\nvisibilityTimeout: 900 s\n-- redelivered if the worker dies",
+     "note": "The pool autoscales on <b>queue depth</b>, not on CPU. Paid uploads get their own queue so free ones cannot starve them."
+    },
+    {
+     "cap": "It first checks whether the output objects already exist in the Processed Bucket. If the queue delivered the message twice, the worker finishes without doing any work: the consumer is idempotent.",
+     "focus": [
+      "transcode",
+      "processed"
+     ],
+     "tone": "async",
+     "title": "Idempotency check",
+     "proto": [
+      "HEAD · S3",
+      "at-least-once"
+     ],
+     "code": "HEAD processed/v_812/master.m3u8\n→ 200  already done: ack, exit\n→ 404  start the job",
+     "note": "Queues are at-least-once; the worker, not the queue, guarantees that work happens once."
+    },
+    {
+     "cap": "It reads the original, cuts it into one-to-two-minute chunks on keyframe boundaries without re-encoding, and publishes one job per chunk and resolution back to the queue: 60 chunks times 4 resolutions is 240 independent jobs across the whole pool.",
+     "say": "It reads the original, cuts it into one to two minute chunks on keyframe boundaries without re-encoding, and publishes one job per chunk and resolution back to the queue: sixty chunks times four resolutions is two hundred forty independent jobs across the whole pool.",
+     "edges": [
+      "tr",
+      "-qt"
+     ],
+     "tone": "async",
+     "title": "Split and fan out",
+     "proto": [
+      "FFmpeg · stream copy",
+      "fan-out"
+     ],
+     "code": "ffmpeg -i raw/v_812.mp4 -c copy -f segment \\\n  -segment_time 90 chunk_%03d.mp4\n→ 60 chunks × { 1080p, 720p, 480p, 360p }\n→ 240 messages → video-uploaded",
+     "mark": {
+      "node": "queue",
+      "text": "240 jobs",
+      "kind": "async"
+     }
+    },
+    {
+     "cap": "Every worker encodes its chunk with FFmpeg, writes the result to the Processed Bucket under a deterministic key, and increments a counter in Redis.",
+     "say": "Every worker encodes its chunk with F F m peg, writes the result to the Processed Bucket under a deterministic key, and increments a counter in Redis.",
+     "edges": [
+      "tr",
+      "tp"
+     ],
+     "focus": [
+      "redis"
+     ],
+     "tone": "async",
+     "title": "Encode one chunk",
+     "proto": [
+      "FFmpeg · libx264",
+      "HTTPS PUT · S3",
+      "Redis INCR"
+     ],
+     "code": "ffmpeg -i chunk_017.mp4 -vf scale=-2:720 \\\n  -c:v libx264 -hls_time 6 …\nPUT processed/v_812/720p/chunk_017/seg_*.ts\nINCR transcode:v_812 → 239",
+     "note": "Deterministic keys make a retried chunk overwrite itself instead of creating a duplicate.",
+     "mark": {
+      "node": "redis",
+      "text": "239 / 240",
+      "kind": "async"
+     }
+    },
+    {
+     "cap": "The worker that sees the counter reach 240 does the fan-in: it stitches the segments, writes the .m3u8 manifests and the thumbnails.",
+     "say": "The worker that sees the counter reach two hundred forty does the fan-in: it stitches the segments, writes the M three U eight manifests and the thumbnails.",
+     "focus": [
+      "transcode",
+      "processed",
+      "redis"
+     ],
+     "tone": "async",
+     "title": "Fan-in",
+     "proto": [
+      "Redis INCR = 240",
+      "HLS manifest"
+     ],
+     "code": "INCR transcode:v_812 → 240   ✓ last one\nmaster.m3u8 → 1080p.m3u8, 720p.m3u8,\n               480p.m3u8, 360p.m3u8\nthumbnails/*.jpg, subtitles.vtt",
+     "marks": [
+      {
+       "node": "redis",
+       "text": "240 / 240",
+       "kind": "good"
+      },
+      {
+       "node": "processed",
+       "text": "HLS ready",
+       "kind": "good"
+      }
+     ]
+    },
+    {
+     "cap": "Then it calls Course / Metadata Service over gRPC: READY. The lesson appears in the course.",
+     "say": "Then it calls Course Metadata Service over G R P C: ready. The lesson appears in the course.",
+     "edges": [
+      "tm",
+      "mdb"
+     ],
+     "tone": "async",
+     "proto": [
+      "gRPC",
+      "SQL"
+     ],
+     "code": "gRPC Metadata.SetState(v_812, 'READY',\n  manifest: 'processed/v_812/master.m3u8')\n\nUPDATE videos SET state = 'READY'\n WHERE id = 'v_812';",
+     "mark": {
+      "node": "metadb",
+      "text": "READY",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "If an encoder fails, the job is retried with backoff up to N times, then goes to a dead-letter queue with an alarm and the video becomes FAILED, without the instructor uploading the file again.",
+     "say": "If an encoder fails, the job is retried with backoff up to N times, then goes to a dead letter queue with an alarm and the video becomes failed, without the instructor uploading the file again.",
+     "edges": [
+      "qt!"
+     ],
+     "focus": [
+      "metadb"
+     ],
+     "tone": "bad",
+     "title": "A chunk fails",
+     "proto": [
+      "retry · backoff",
+      "DLQ"
+     ],
+     "code": "attempt 1, 2, … 5 → backoff 2 s, 4 s, 8 s …\n→ video-uploaded-dlq + alarm\nUPDATE videos SET state = 'FAILED';",
+     "note": "The original is still in the Raw Bucket, so a fix means <b>replay the DLQ</b>, not a new upload.",
+     "marks": [
+      {
+       "node": "queue",
+       "text": "DLQ",
+       "kind": "bad"
+      },
+      {
+       "node": "metadb",
+       "text": "FAILED",
+       "kind": "bad"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "watch",
+   "chapter": "Watching",
+   "kicker": "04 · Scenario 3",
+   "title": "Watching: signed URL, CDN, DRM, progress",
+   "steps": [
+    {
+     "cap": "The student opens the lesson. The player asks for the video: GET /videos/:id goes through API Gateway to Course / Metadata Service, which checks in Postgres that the student bought the course.",
+     "say": "The student opens the lesson. The player asks for the video: get slash videos slash I D goes through A P I Gateway to Course Metadata Service, which checks in Postgres that the student bought the course.",
+     "edges": [
+      "cg",
+      "gm",
+      "mdb"
+     ],
+     "title": "Client → API Gateway → Metadata Service",
+     "proto": [
+      "HTTPS REST",
+      "gRPC",
+      "SQL"
+     ],
+     "code": "GET /videos/v_812\nAuthorization: Bearer …\n→ gRPC Metadata.GetPlayback(\n    user: 'u_42', video: 'v_812')\nSELECT 1 FROM enrollments\n WHERE user_id = 'u_42'\n   AND course_id = 'c_31';"
+    },
+    {
+     "cap": "It returns a signed URL to the manifest, valid for a few minutes. The signature travels inside the URL; the CDN will check it at the edge.",
+     "say": "It returns a signed U R L to the manifest, valid for a few minutes. The signature travels inside the U R L; the C D N will check it at the edge.",
+     "edges": [
+      "-gm",
+      "-cg"
+     ],
+     "tone": "good",
+     "title": "Metadata Service → Client",
+     "proto": [
+      "signed URL · 5 min"
+     ],
+     "code": "200 OK\n{ manifest: 'https://cdn.example.com/\n    v_812/master.m3u8?exp=1760342400\n    &sig=8f1c…',\n  drm: 'https://drm.example.com/license' }",
+     "mark": {
+      "node": "client",
+      "text": "signed URL",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "The player fetches the manifest from the CDN, then the segments one by one. The edge verifies the signature; on a miss it pulls the segment once from the Processed Bucket and serves everyone else from its cache.",
+     "say": "The player fetches the manifest from the C D N, then the segments one by one. The edge verifies the signature; on a miss it pulls the segment once from the Processed Bucket and serves everyone else from its cache.",
+     "edges": [
+      "cc",
+      "pc"
+     ],
+     "tone": "read",
+     "title": "Client → CDN → Processed Bucket",
+     "proto": [
+      "HTTPS · CDN",
+      "signature check",
+      "origin pull"
+     ],
+     "code": "GET /v_812/master.m3u8?exp=…&sig=…\nGET /v_812/1080p/seg_001.ts\n→ edge HIT 97 %\n→ MISS: GET s3://processed/v_812/…\n        then cache at the edge",
+     "mark": {
+      "node": "cdn",
+      "text": "HIT 97 %",
+      "kind": "read"
+     }
+    },
+    {
+     "cap": "The player measures the connection itself and picks 1080p or 480p for the next chunk: adaptive bitrate, decided on the client, invisible to the servers.",
+     "say": "The player measures the connection itself and picks ten eighty p or four eighty p for the next chunk: adaptive bitrate, decided on the client, invisible to the servers.",
+     "focus": [
+      "client",
+      "cdn"
+     ],
+     "tone": "read",
+     "title": "Adaptive bitrate",
+     "proto": [
+      "HLS · ABR"
+     ],
+     "code": "throughput 8 Mbps → 1080p/seg_041.ts\nthroughput 2 Mbps → 480p/seg_042.ts\nbuffer < 10 s → step down one rung",
+     "mark": {
+      "node": "client",
+      "text": "ABR",
+      "kind": "read"
+     }
+    },
+    {
+     "cap": "Because the segments are encrypted, the player asks DRM License Service for a key. The service asks Course / Metadata Service over gRPC whether the right is still valid and returns the key: Widevine or FairPlay.",
+     "say": "Because the segments are encrypted, the player asks D R M License Service for a key. The service asks Course Metadata Service over G R P C whether the right is still valid and returns the key: Widevine or FairPlay.",
+     "edges": [
+      "cd",
+      "dm"
+     ],
+     "tone": "read",
+     "title": "Client → DRM License Service → Metadata",
+     "proto": [
+      "HTTPS",
+      "gRPC",
+      "Widevine · FairPlay"
+     ],
+     "code": "POST /license\n{ video: 'v_812', device, challenge }\n→ gRPC Metadata.CheckEntitlement(\n    user: 'u_42', video: 'v_812')\n→ 200 { license: <Widevine blob>, ttl: 3600 }",
+     "mark": {
+      "node": "drm",
+      "text": "key issued",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Every 5 to 10 seconds the player sends PUT /progress. API Gateway forwards it over gRPC to Progress Service, which writes the position to Redis immediately.",
+     "say": "Every five to ten seconds the player sends put slash progress. A P I Gateway forwards it over G R P C to Progress Service, which writes the position to Redis immediately.",
+     "edges": [
+      "cg",
+      "gp",
+      "pr"
+     ],
+     "tone": "read",
+     "title": "Progress: write-behind",
+     "proto": [
+      "HTTPS PUT",
+      "gRPC",
+      "Redis SET"
+     ],
+     "code": "PUT /progress { video: 'v_812', pos: 742 }\n→ gRPC Progress.Set(\n    user: 'u_42', video: 'v_812', pos: 742)\nSET progress:u_42:v_812 742",
+     "mark": {
+      "node": "redis",
+      "text": "pos 742",
+      "kind": "read"
+     }
+    },
+    {
+     "cap": "A periodic job flushes the positions to Postgres in batches, so another device resumes from the same spot and the database never sees 100 000 writes per second.",
+     "say": "A periodic job flushes the positions to Postgres in batches, so another device resumes from the same spot and the database never sees a hundred thousand writes per second.",
+     "focus": [
+      "redis",
+      "metadb"
+     ],
+     "tone": "async",
+     "title": "Redis → Postgres, in batches",
+     "proto": [
+      "every 10 s",
+      "batch UPDATE"
+     ],
+     "code": "every 10 s:\nSCAN progress:*  → 1 000 keys per batch\nUPDATE progress SET pos = v.pos\n  FROM (VALUES ('u_42','v_812',742), …)\n    AS v(u, vid, pos)\n WHERE progress.user_id = v.u\n   AND progress.video_id = v.vid;",
+     "note": "Losing a few seconds of progress on a Redis failover is acceptable; losing the database to 100k writes/s is not.",
+     "mark": {
+      "node": "metadb",
+      "text": "batch flush",
+      "kind": "async"
+     }
+    }
+   ]
+  }
+ ],
+ "recap": {
+  "chapter": "Recap",
+  "title": "What to say in the interview",
+  "closing": "Thin requests.<br><em>Not a single video byte.</em>",
+  "items": [
+   {
+    "text": "Presigned URL: the file goes browser → S3, never through us",
+    "kind": "sync",
+    "cap": "To sum up. A presigned URL sends the file from the browser straight to S3; our servers never carry video bytes.",
+    "say": "To sum up. A presigned U R L sends the file from the browser straight to S three; our servers never carry video bytes."
+   },
+   {
+    "text": "S3 event → queue → workers that pull, not push",
+    "kind": "async",
+    "cap": "An S3 event feeds a queue, and workers pull jobs at their own pace: the queue absorbs the spike.",
+    "say": "An S three event feeds a queue, and workers pull jobs at their own pace: the queue absorbs the spike."
+   },
+   {
+    "text": "Fan-out per chunk and resolution, fan-in on a Redis counter, DLQ",
+    "kind": "async",
+    "cap": "Transcoding fans out per chunk and resolution and fans in on a Redis counter, with idempotent workers and a dead-letter queue."
+   },
+   {
+    "text": "Signed URL + CDN + DRM: the watch path bypasses the app servers",
+    "kind": "read",
+    "cap": "Watching is a signed URL, segments from the CDN and a key from DRM; the application servers only answer thin requests.",
+    "say": "Watching is a signed U R L, segments from the C D N and a key from D R M; the application servers only answer thin requests."
+   },
+   {
+    "text": "Progress write-behind: Redis first, Postgres in batches",
+    "kind": "read",
+    "cap": "And progress is write-behind: Redis first, Postgres in batches. Thin requests, not a single video byte."
+   }
+  ]
+ }
+}

@@ -1,0 +1,936 @@
+{
+ "intro": {
+  "chapter": "Intro",
+  "kicker": "System Design · Flow walkthrough",
+  "title": "Ticketing platform<br><em>Ticketmaster-style</em>",
+  "subtitle": "A million people, fifty thousand seats, one narrow write path and one wide read path.",
+  "chips": [
+   {
+    "text": "Waiting Room",
+    "kind": "sync"
+   },
+   {
+    "text": "API Gateway",
+    "kind": "sync"
+   },
+   {
+    "text": "Booking Service",
+    "kind": "sync"
+   },
+   {
+    "text": "Redis hold",
+    "kind": "sync"
+   },
+   {
+    "text": "Postgres",
+    "kind": "sync"
+   },
+   {
+    "text": "Outbox → Kafka",
+    "kind": "async"
+   },
+   {
+    "text": "Saga · Temporal",
+    "kind": "async"
+   },
+   {
+    "text": "Stripe",
+    "kind": "async"
+   },
+   {
+    "text": "Seat Map · WebSocket · CDN",
+    "kind": "read"
+   }
+  ],
+  "cues": [
+   {
+    "cap": "Designing a Ticketmaster-style ticketing platform, scenario by scenario."
+   },
+   {
+    "cap": "The hard part is not volume but contention: a million people fighting over fifty thousand seats at 10:00 sharp. Let's follow the requests through the system.",
+    "say": "The hard part is not volume but contention: a million people fighting over fifty thousand seats at ten o'clock sharp. Let's follow the requests through the system."
+   }
+  ]
+ },
+ "nodes": [
+  {
+   "id": "client",
+   "label": "Client",
+   "sub": "browser / app",
+   "type": "client",
+   "x": 150,
+   "y": 390
+  },
+  {
+   "id": "waiting",
+   "label": "Waiting Room",
+   "sub": "edge queue",
+   "x": 390,
+   "y": 240
+  },
+  {
+   "id": "gw",
+   "label": "API Gateway",
+   "sub": "auth · idem key",
+   "x": 630,
+   "y": 240
+  },
+  {
+   "id": "booking",
+   "label": "Booking Service",
+   "sub": "hold · UPDATE",
+   "x": 870,
+   "y": 240
+  },
+  {
+   "id": "pg",
+   "label": "Postgres",
+   "sub": "seats · outbox",
+   "type": "store",
+   "x": 1110,
+   "y": 240
+  },
+  {
+   "id": "redis",
+   "label": "Redis",
+   "sub": "hold · snapshot",
+   "type": "store",
+   "x": 870,
+   "y": 390
+  },
+  {
+   "id": "reaper",
+   "label": "Reaper Job",
+   "sub": "expired holds",
+   "x": 630,
+   "y": 390
+  },
+  {
+   "id": "relay",
+   "label": "Outbox Relay",
+   "sub": "stream / CDC",
+   "x": 1110,
+   "y": 390
+  },
+  {
+   "id": "kafka",
+   "label": "Kafka",
+   "sub": "booking-events",
+   "type": "broker",
+   "x": 1110,
+   "y": 540
+  },
+  {
+   "id": "saga",
+   "label": "Saga\nOrchestrator",
+   "sub": "Temporal",
+   "x": 1110,
+   "y": 690
+  },
+  {
+   "id": "payment",
+   "label": "Payment Service",
+   "sub": "charge · refund",
+   "x": 835,
+   "y": 690
+  },
+  {
+   "id": "stripe",
+   "label": "Stripe",
+   "sub": "PSP",
+   "type": "external",
+   "x": 575,
+   "y": 690
+  },
+  {
+   "id": "ticket",
+   "label": "Ticket Service",
+   "sub": "PDF · QR",
+   "x": 850,
+   "y": 840
+  },
+  {
+   "id": "notify",
+   "label": "Notification\nService",
+   "sub": "email · SMS",
+   "x": 1110,
+   "y": 840
+  },
+  {
+   "id": "seatmap",
+   "label": "Seat Map Service",
+   "sub": "snapshot + delta",
+   "x": 640,
+   "y": 540
+  },
+  {
+   "id": "cdn",
+   "label": "CDN",
+   "sub": "seat map JSON",
+   "type": "external",
+   "x": 350,
+   "y": 540
+  }
+ ],
+ "lanes": [
+  {
+   "text": "WRITE PATH · NARROW",
+   "x": 307,
+   "y": 195,
+   "kind": "sync"
+  },
+  {
+   "text": "READ PATH · WIDE",
+   "x": 280,
+   "y": 622,
+   "kind": "read"
+  },
+  {
+   "text": "ASYNC · OUTBOX → SAGA",
+   "x": 1228,
+   "y": 338,
+   "kind": "async",
+   "anchor": "end"
+  }
+ ],
+ "edges": [
+  {
+   "id": "cw",
+   "from": "client",
+   "to": "waiting",
+   "label": "HTTPS"
+  },
+  {
+   "id": "wg",
+   "from": "waiting",
+   "to": "gw",
+   "label": "token"
+  },
+  {
+   "id": "gb",
+   "from": "gw",
+   "to": "booking",
+   "label": "gRPC"
+  },
+  {
+   "id": "br",
+   "from": "booking",
+   "to": "redis",
+   "label": "SET NX EX 600",
+   "dx": 78
+  },
+  {
+   "id": "bp",
+   "from": "booking",
+   "to": "pg",
+   "label": "SQL tx"
+  },
+  {
+   "id": "pr",
+   "from": "pg",
+   "to": "relay",
+   "label": "outbox rows",
+   "dash": true,
+   "dx": 72
+  },
+  {
+   "id": "rk",
+   "from": "relay",
+   "to": "kafka",
+   "label": "BookingCreated",
+   "dash": true,
+   "dx": -80
+  },
+  {
+   "id": "ks",
+   "from": "kafka",
+   "to": "saga",
+   "label": "consume",
+   "dash": true,
+   "dx": -62
+  },
+  {
+   "id": "sp",
+   "from": "saga",
+   "to": "payment",
+   "label": "1 · gRPC"
+  },
+  {
+   "id": "ps",
+   "from": "payment",
+   "to": "stripe",
+   "label": "HTTPS"
+  },
+  {
+   "id": "st",
+   "from": "saga",
+   "to": "ticket",
+   "label": "2 · gRPC",
+   "at": 0.55,
+   "dx": -62
+  },
+  {
+   "id": "sn",
+   "from": "saga",
+   "to": "notify",
+   "label": "3 · gRPC",
+   "dx": 62
+  },
+  {
+   "id": "spg",
+   "from": "saga",
+   "to": "pg",
+   "label": "CONFIRMED",
+   "dash": true,
+   "via": [
+    [
+     1245,
+     690
+    ],
+    [
+     1245,
+     240
+    ]
+   ],
+   "at": 0.5,
+   "dx": -2,
+   "dy": 0
+  },
+  {
+   "id": "rp",
+   "from": "reaper",
+   "to": "pg",
+   "label": "every 30 s",
+   "dash": true,
+   "at": 0.14,
+   "dy": -16
+  },
+  {
+   "id": "kseat",
+   "from": "kafka",
+   "to": "seatmap",
+   "label": "seat changed",
+   "dash": true,
+   "kind": "read"
+  },
+  {
+   "id": "sr",
+   "from": "seatmap",
+   "to": "redis",
+   "label": "SET snapshot",
+   "kind": "read",
+   "at": 0.5,
+   "dx": 10,
+   "dy": 16
+  },
+  {
+   "id": "cs",
+   "from": "cdn",
+   "to": "seatmap",
+   "label": "on miss",
+   "kind": "read"
+  },
+  {
+   "id": "cc",
+   "from": "client",
+   "to": "cdn",
+   "label": "GET seats",
+   "kind": "read",
+   "at": 0.45,
+   "dy": 16
+  },
+  {
+   "id": "sw",
+   "from": "seatmap",
+   "to": "client",
+   "label": "WebSocket delta",
+   "dash": true,
+   "kind": "read",
+   "via": [
+    [
+     380,
+     450
+    ]
+   ],
+   "at": 0.3,
+   "dy": -16
+  }
+ ],
+ "scenes": [
+  {
+   "id": "arch",
+   "chapter": "Architecture",
+   "kicker": "01 · The map",
+   "title": "Ten services, two separate paths",
+   "steps": [
+    {
+     "cap": "The write path is narrow and strictly controlled: Waiting Room, API Gateway, Booking Service, with Redis for holds and Postgres as the source of truth.",
+     "focus": [
+      "client",
+      "waiting",
+      "gw",
+      "booking",
+      "redis",
+      "pg"
+     ],
+     "title": "Write path",
+     "proto": [
+      "HTTPS",
+      "gRPC",
+      "Redis",
+      "SQL"
+     ],
+     "note": "Every hop is synchronous: the user waits for <b>201 PENDING</b>. The gate at the edge lets through only what Postgres can absorb."
+    },
+    {
+     "cap": "Everything after the booking is asynchronous: an Outbox Relay publishes to Kafka, and a Saga Orchestrator drives payment, ticket and notification.",
+     "focus": [
+      "relay",
+      "kafka",
+      "saga",
+      "payment",
+      "stripe",
+      "ticket",
+      "notify"
+     ],
+     "tone": "async",
+     "title": "Async path",
+     "proto": [
+      "outbox → Kafka",
+      "Temporal saga",
+      "gRPC per step"
+     ],
+     "note": "The user does not wait for any of this. Each saga step retries on its own and has a compensation if the next one fails."
+    },
+    {
+     "cap": "The read path is wide and fully separate: Seat Map Service, a Redis snapshot, WebSocket deltas and a CDN. Two hundred thousand refreshes per second never touch the seats table.",
+     "focus": [
+      "seatmap",
+      "cdn",
+      "client",
+      "redis"
+     ],
+     "tone": "read",
+     "title": "Read path",
+     "proto": [
+      "Redis snapshot",
+      "WebSocket",
+      "CDN · TTL 1-2 s"
+     ],
+     "note": "CQRS in practice: writes are strict, reads are eventually consistent and cheap. The <b>seats</b> table sees 0 of the 200 000 req/s."
+    }
+   ]
+  },
+  {
+   "id": "happy",
+   "chapter": "Buy a ticket",
+   "kicker": "02 · Scenario 1",
+   "title": "From the waiting room to a paid ticket",
+   "steps": [
+    {
+     "cap": "At 10:00, five hundred thousand people press Buy in the same second. Every request hits the Waiting Room at the edge over HTTPS.",
+     "say": "At ten o'clock, five hundred thousand people press Buy in the same second. Every request hits the Waiting Room at the edge over H T T P S.",
+     "edges": [
+      "cw"
+     ],
+     "proto": [
+      "HTTPS",
+      "500 000 req/s"
+     ],
+     "code": "GET /events/123\n→ 200 \"You are #5432 in line\"",
+     "note": "Nobody gets in yet. The waiting room holds everyone and shows a queue position.",
+     "mark": {
+      "node": "waiting",
+      "text": "#5432 in line",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "Every few seconds it releases as many people as the database can handle, about 2 000 per second, each with a short-lived signed token. No valid token, no entry.",
+     "say": "Every few seconds it releases as many people as the database can handle, about two thousand per second, each with a short-lived signed token. No valid token, no entry.",
+     "edges": [
+      "wg"
+     ],
+     "proto": [
+      "token bucket · ~2 000 RPS",
+      "JWT or HMAC token"
+     ],
+     "code": "token = sign({ pos: 5432, exp: now + 120 s })\n\nno valid token → 429 Too Many Requests",
+     "note": "<b>Backpressure point 1:</b> the gate opens exactly as fast as Postgres can write."
+    },
+    {
+     "cap": "The user picks seat 42 and clicks Reserve. The browser sends POST /bookings with the token and an Idempotency-Key; the gateway verifies the signature and calls Booking Service over gRPC.",
+     "say": "The user picks seat forty-two and clicks Reserve. The browser sends post slash bookings with the token and an idempotency key; the gateway verifies the signature and calls Booking Service over G R P C.",
+     "edges": [
+      "gb"
+     ],
+     "proto": [
+      "HTTPS REST",
+      "gRPC"
+     ],
+     "code": "POST /bookings\nIdempotency-Key: 7f3c…a1\n{ event: 123, seat: 42 }\n\n→ gRPC Booking.Create(event, seat, user)",
+     "note": "The same key on a retry returns the same booking, never a second one."
+    },
+    {
+     "cap": "Booking Service first tries SET NX on a hold key in Redis with a ten-minute TTL. If the key already exists, someone else holds the seat and the answer is 'already taken' in under a millisecond, without touching the database.",
+     "say": "Booking Service first tries set N X on a hold key in Redis with a ten-minute T T L. If the key already exists, someone else holds the seat and the answer is already taken in under a millisecond, without touching the database.",
+     "edges": [
+      "br"
+     ],
+     "code": "SET hold:evt123:seat42 u42 NX EX 600\n→ OK      we hold it\n→ (nil)   someone else does, < 1 ms",
+     "note": "The lock is an <b>optimization</b> that stops 99.9% of the contention before Postgres. It is not the guarantee.",
+     "mark": {
+      "node": "redis",
+      "text": "hold · 600 s",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "With the lock taken, it runs one SQL transaction: a conditional UPDATE that flips the seat to HELD only if it is still AVAILABLE, plus an INSERT into the outbox table.",
+     "say": "With the lock taken, it runs one S Q L transaction: a conditional update that flips the seat to held only if it is still available, plus an insert into the outbox table.",
+     "edges": [
+      "bp"
+     ],
+     "proto": [
+      "SQL transaction"
+     ],
+     "code": "BEGIN;\nUPDATE seats SET status = 'HELD'\n WHERE seat_id = 42 AND status = 'AVAILABLE';\n-- 0 rows affected → rollback, someone was faster\nINSERT INTO outbox (BookingCreated, bk_981);\nCOMMIT;",
+     "note": "Zero rows affected means someone won even with the lock, for example after a Redis failover. <b>The database, not Redis, is the real guarantee.</b>",
+     "mark": {
+      "node": "pg",
+      "text": "seat 42 HELD",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "On success the client gets 201 PENDING with ten minutes to pay. The seat is held, nothing is charged yet.",
+     "say": "On success the client gets two-oh-one pending with ten minutes to pay. The seat is held, nothing is charged yet.",
+     "edges": [
+      "-gb",
+      "-wg",
+      "-cw"
+     ],
+     "tone": "good",
+     "title": "Booking Service → Client",
+     "proto": [
+      "HTTP 201 Created"
+     ],
+     "code": "HTTP 201 Created\n{ booking: 'bk_981', status: 'PENDING',\n  expires_in: 600 }",
+     "note": "The request path ends here. Payment, ticket and email happen asynchronously.",
+     "mark": {
+      "node": "client",
+      "text": "201 PENDING",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Meanwhile the Outbox Relay reads the new outbox row, through a stream or CDC, and publishes BookingCreated to Kafka. Booking Service never writes to Kafka directly.",
+     "say": "Meanwhile the Outbox Relay reads the new outbox row, through a stream or C D C, and publishes Booking Created to Kafka. Booking Service never writes to Kafka directly.",
+     "edges": [
+      "pr",
+      "rk"
+     ],
+     "proto": [
+      "pg-query-stream or Debezium",
+      "Kafka · booking-events"
+     ],
+     "code": "SELECT * FROM outbox WHERE published_at IS NULL\n→ produce booking-events\n  { type: 'BookingCreated', booking: 'bk_981' }\n→ UPDATE outbox SET published_at = NOW()",
+     "note": "<b>Transactional outbox:</b> the event is committed together with the booking, so it can never be lost or published without a booking."
+    },
+    {
+     "cap": "The user enters the card and sends POST /bookings/bk_981/pay. The Saga Orchestrator, for example Temporal, consumes the event and runs the state machine: charge, issue ticket, notify.",
+     "say": "The user enters the card and sends post slash bookings slash pay. The Saga Orchestrator, for example Temporal, consumes the event and runs the state machine: charge, issue ticket, notify.",
+     "edges": [
+      "ks"
+     ],
+     "proto": [
+      "Kafka consumer group",
+      "Temporal workflow"
+     ],
+     "code": "workflow bk_981:\n  1. charge          (Payment Service)\n  2. issue ticket    (Ticket Service)\n  3. notify          (Notification Service)\n  on failure → compensate",
+     "note": "Each step is a synchronous gRPC call with its own retries; the saga as a whole is asynchronous to the client."
+    },
+    {
+     "cap": "Step one: the saga calls Payment Service over gRPC, which calls Stripe over HTTPS with an idempotency key, so a retried request can never charge the card twice.",
+     "say": "Step one: the saga calls Payment Service over G R P C, which calls Stripe over H T T P S with an idempotency key, so a retried request can never charge the card twice.",
+     "edges": [
+      "sp",
+      "ps"
+     ],
+     "proto": [
+      "gRPC",
+      "HTTPS REST",
+      "Idempotency-Key"
+     ],
+     "code": "POST https://api.stripe.com/v1/charges\nIdempotency-Key: bk_981-charge\namount = 12000, currency = 'eur'\n→ 200 { status: 'succeeded' }",
+     "mark": {
+      "node": "stripe",
+      "text": "charged ✓",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Steps two and three: Ticket Service generates the PDF with a QR code and stores it in object storage, and Notification Service sends the email.",
+     "say": "Steps two and three: Ticket Service generates the P D F with a Q R code and stores it in object storage, and Notification Service sends the email.",
+     "edges": [
+      "st",
+      "sn"
+     ],
+     "proto": [
+      "gRPC",
+      "object storage",
+      "email"
+     ],
+     "code": "Ticket.Issue(bk_981)  → s3://tickets/bk_981.pdf\nNotify.Send(user, 'ticket', { pdf })",
+     "marks": [
+      {
+       "node": "ticket",
+       "text": "PDF + QR",
+       "kind": "good"
+      },
+      {
+       "node": "notify",
+       "text": "email sent",
+       "kind": "good"
+      }
+     ]
+    },
+    {
+     "cap": "Finally the saga marks the booking CONFIRMED and the seat BOOKED in Postgres and deletes the hold in Redis. The client learns over WebSocket that the ticket is issued.",
+     "say": "Finally the saga marks the booking confirmed and the seat booked in Postgres and deletes the hold in Redis. The client learns over websocket that the ticket is issued.",
+     "edges": [
+      "spg"
+     ],
+     "focus": [
+      "redis",
+      "client"
+     ],
+     "title": "Saga → Postgres, Redis, Client",
+     "proto": [
+      "SQL",
+      "Redis DEL",
+      "WebSocket"
+     ],
+     "code": "UPDATE bookings SET status = 'CONFIRMED';\nUPDATE seats SET status = 'BOOKED';\nDEL hold:evt123:seat42\n→ WS { booking: 'bk_981', status: 'CONFIRMED' }",
+     "marks": [
+      {
+       "node": "pg",
+       "text": "BOOKED",
+       "kind": "good"
+      },
+      {
+       "node": "redis",
+       "text": "DEL hold",
+       "kind": "good"
+      },
+      {
+       "node": "client",
+       "text": "ticket issued ✓",
+       "kind": "good"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "fail",
+   "chapter": "Timeouts & failures",
+   "kicker": "03 · Scenario 2",
+   "title": "Payment fails or the time runs out",
+   "steps": [
+    {
+     "cap": "The user closes the tab with a held seat. Nothing happens immediately: the Redis hold expires on its own after ten minutes, but the Postgres row still says HELD.",
+     "say": "The user closes the tab with a held seat. Nothing happens immediately: the Redis hold expires on its own after ten minutes, but the Postgres row still says held.",
+     "focus": [
+      "client",
+      "redis",
+      "pg"
+     ],
+     "tone": "bad",
+     "title": "Hold expired",
+     "proto": [
+      "TTL 600 s"
+     ],
+     "code": "TTL hold:evt123:seat42 → -2   (key is gone)\n\nseats: status = 'HELD'\n       hold_expires_at < NOW()",
+     "note": "Two mechanisms clean this up: a lazy check on the next attempt, and a periodic reaper.",
+     "marks": [
+      {
+       "node": "redis",
+       "text": "key expired",
+       "kind": "bad"
+      },
+      {
+       "node": "pg",
+       "text": "still HELD",
+       "kind": "bad"
+      }
+     ]
+    },
+    {
+     "cap": "The first mechanism is lazy: the next person who asks for seat 42 runs the same conditional UPDATE, and an expired hold counts as available right in the WHERE clause.",
+     "say": "The first mechanism is lazy: the next person who asks for seat forty-two runs the same conditional update, and an expired hold counts as available right in the where clause.",
+     "edges": [
+      "cw",
+      "wg",
+      "gb",
+      "bp"
+     ],
+     "title": "Next client → Postgres",
+     "proto": [
+      "lazy expiry"
+     ],
+     "code": "UPDATE seats SET status = 'HELD', held_by = $me\n WHERE seat_id = 42\n   AND (status = 'AVAILABLE'\n     OR (status = 'HELD' AND hold_expires_at < NOW()))\nRETURNING seat_id;",
+     "mark": {
+      "node": "pg",
+      "text": "HELD by new user",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "The second mechanism is the Reaper Job: every thirty seconds, under a distributed lock, it returns expired holds to AVAILABLE so they show up in the seat map again.",
+     "say": "The second mechanism is the Reaper Job: every thirty seconds, under a distributed lock, it returns expired holds to available so they show up in the seat map again.",
+     "edges": [
+      "rp"
+     ],
+     "tone": "read",
+     "proto": [
+      "cron · 30 s",
+      "Redis lock"
+     ],
+     "code": "SET lock:reaper NX EX 25\nUPDATE seats SET status = 'AVAILABLE'\n WHERE status = 'HELD' AND hold_expires_at < NOW();",
+     "mark": {
+      "node": "pg",
+      "text": "AVAILABLE",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Now the other failure. The payment succeeds, but Ticket Service crashes. After N failed attempts the saga stops retrying and starts compensation.",
+     "edges": [
+      "sp",
+      "ps",
+      "st!"
+     ],
+     "title": "Saga: step 2 fails",
+     "proto": [
+      "retry with backoff",
+      "then compensate"
+     ],
+     "code": "1. charge        ✓  Stripe ch_8f2\n2. issue ticket  ✕  retry 1, 2, … N\n→ give up, run compensations",
+     "marks": [
+      {
+       "node": "stripe",
+       "text": "charged ✓",
+       "kind": "good"
+      },
+      {
+       "node": "ticket",
+       "text": "crashed ✕",
+       "kind": "bad"
+      }
+     ]
+    },
+    {
+     "cap": "Compensation runs the saga backwards: a refund through Payment Service with a new idempotency key, release the seat in Postgres and Redis, and tell the user.",
+     "edges": [
+      "sp",
+      "ps",
+      "spg",
+      "sn"
+     ],
+     "tone": "async",
+     "focus": [
+      "redis"
+     ],
+     "title": "Compensating actions",
+     "proto": [
+      "refund",
+      "release seat",
+      "notify"
+     ],
+     "code": "POST /v1/refunds\nIdempotency-Key: bk_981-refund\n\nUPDATE seats SET status = 'AVAILABLE';\nUPDATE bookings SET status = 'FAILED';\nDEL hold:evt123:seat42",
+     "marks": [
+      {
+       "node": "stripe",
+       "text": "refunded",
+       "kind": "async"
+      },
+      {
+       "node": "pg",
+       "text": "AVAILABLE",
+       "kind": "good"
+      },
+      {
+       "node": "redis",
+       "text": "DEL hold",
+       "kind": "good"
+      },
+      {
+       "node": "notify",
+       "text": "\"refund issued\"",
+       "kind": "async"
+      }
+     ]
+    },
+    {
+     "cap": "If the compensation fails too, the case goes to a dead-letter queue and a manual-intervention list. 'Paid, but no ticket' is an incident, not a retry.",
+     "focus": [
+      "kafka",
+      "saga"
+     ],
+     "tone": "bad",
+     "title": "Compensation failed",
+     "proto": [
+      "Kafka DLQ",
+      "ops queue"
+     ],
+     "code": "topic: booking-events-dlq\n{ booking: 'bk_981', step: 'refund',\n  error: 'stripe 503', attempts: 5 }",
+     "note": "Alert on it: a DLQ that nobody reads is a silent data loss.",
+     "mark": {
+      "node": "kafka",
+      "text": "DLQ",
+      "kind": "bad"
+     }
+    },
+    {
+     "cap": "And a nightly reconciliation job compares our bookings with Stripe's settlement file and catches everything that slipped between the cracks.",
+     "focus": [
+      "stripe",
+      "pg"
+     ],
+     "tone": "read",
+     "title": "Nightly reconciliation",
+     "proto": [
+      "cron · 03:00",
+      "settlement CSV"
+     ],
+     "code": "stripe settlement.csv  ⟷  bookings\nbk_901 ✓   bk_902 ✓   bk_904 ✓\nbk_903 paid, no ticket → ops queue",
+     "note": "Designed on the assumption that mismatches <b>will</b> happen; the question is how fast they are caught."
+    }
+   ]
+  },
+  {
+   "id": "read",
+   "chapter": "Seat map",
+   "kicker": "04 · Scenario 3",
+   "title": "Watching the hall: 200 000 reads per second",
+   "steps": [
+    {
+     "cap": "While 2 000 people per second book, a million people watch the seat map and refresh it every five seconds. That is 200 000 requests per second, and none of them may reach the seats table.",
+     "say": "While two thousand people per second book, a million people watch the seat map and refresh it every five seconds. That is two hundred thousand requests per second, and none of them may reach the seats table.",
+     "focus": [
+      "client"
+     ],
+     "tone": "read",
+     "title": "The read load",
+     "proto": [
+      "1M viewers",
+      "refresh / 5 s"
+     ],
+     "code": "1 000 000 viewers / 5 s = 200 000 req/s\nseats table:               0 req/s",
+     "note": "The read side is a separate system that only ever sees a snapshot."
+    },
+    {
+     "cap": "Seat Map Service listens for changes, through a Kafka event or Postgres NOTIFY, and keeps a fresh snapshot of the whole hall in Redis.",
+     "say": "Seat Map Service listens for changes, through a Kafka event or Postgres notify, and keeps a fresh snapshot of the whole hall in Redis.",
+     "edges": [
+      "kseat",
+      "sr"
+     ],
+     "proto": [
+      "Kafka or LISTEN / NOTIFY",
+      "Redis SET"
+     ],
+     "code": "on SeatChanged { seat: 42, status: 'HELD' }:\n  snapshot[42] = 'HELD'\n  SET seatmap:evt123 <json>   -- whole hall",
+     "mark": {
+      "node": "redis",
+      "text": "snapshot",
+      "kind": "read"
+     }
+    },
+    {
+     "cap": "For the initial load the client fetches the map as JSON through the CDN, cached for one to two seconds. On a miss the edge pulls it once from Seat Map Service and serves everyone else from cache.",
+     "say": "For the initial load the client fetches the map as jason through the C D N, cached for one to two seconds. On a miss the edge pulls it once from Seat Map Service and serves everyone else from cache.",
+     "edges": [
+      "cc",
+      "cs"
+     ],
+     "proto": [
+      "HTTPS",
+      "CDN · max-age 2"
+     ],
+     "code": "GET /events/123/seats\nCache-Control: max-age=2\n→ CDN hit ratio ≈ 99 %, origin sees ~1 req/s per edge",
+     "mark": {
+      "node": "cdn",
+      "text": "TTL 1-2 s",
+      "kind": "read"
+     }
+    },
+    {
+     "cap": "Pages that are already open receive small delta messages over WebSocket: 'seat 42 is now taken', instead of the whole map.",
+     "say": "Pages that are already open receive small delta messages over websocket: seat forty-two is now taken, instead of the whole map.",
+     "edges": [
+      "sw"
+     ],
+     "proto": [
+      "WebSocket push"
+     ],
+     "code": "WS → { seat: 42, status: 'HELD' }\nWS → { seat: 17, status: 'AVAILABLE' }",
+     "mark": {
+      "node": "client",
+      "text": "delta: 42 taken",
+      "kind": "read"
+     }
+    },
+    {
+     "cap": "The picture may lag by a second or two, so a click on a seat can still fail with 'just taken'. Reads are eventually consistent; writes are not.",
+     "focus": [
+      "client",
+      "booking"
+     ],
+     "tone": "sync",
+     "title": "Stale reads are fine",
+     "proto": [
+      "eventual consistency"
+     ],
+     "code": "click seat 42 → POST /bookings\n→ 409 Conflict 'just taken'\n→ pick another seat",
+     "note": "<b>Reads:</b> eventually consistent. <b>Writes:</b> strict, decided by the conditional UPDATE."
+    }
+   ]
+  }
+ ],
+ "recap": {
+  "chapter": "Recap",
+  "title": "What to say in the interview",
+  "closing": "The lock is not correctness.<br><em>The database is.</em>",
+  "items": [
+   {
+    "text": "Waiting room + token bucket = backpressure at the edge",
+    "kind": "sync",
+    "cap": "To sum up. A waiting room with a token bucket gives backpressure at the edge."
+   },
+   {
+    "text": "Redis SET NX hold = an optimization, not correctness",
+    "kind": "sync",
+    "cap": "A Redis hold with SET NX is an optimization, not correctness.",
+    "say": "A Redis hold with set N X is an optimization, not correctness."
+   },
+   {
+    "text": "Conditional UPDATE + UNIQUE constraint = the guarantee",
+    "kind": "good",
+    "cap": "A conditional UPDATE and a UNIQUE constraint are the real guarantee.",
+    "say": "A conditional update and a unique constraint are the real guarantee."
+   },
+   {
+    "text": "Transactional outbox → Kafka → Saga with compensations",
+    "kind": "async",
+    "cap": "A transactional outbox feeds Kafka, and a saga with compensations finishes payment, ticket and email."
+   },
+   {
+    "text": "Separate read path: Redis snapshot, WebSocket deltas, CDN",
+    "kind": "read",
+    "cap": "And the seat map lives on a fully separate read path: Redis snapshot, WebSocket deltas and a CDN. The lock is not correctness. The database is."
+   }
+  ]
+ }
+}

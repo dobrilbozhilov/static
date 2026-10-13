@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Marked } from 'marked';
@@ -79,15 +79,51 @@ function makeMarked(page, headings) {
   return marked;
 }
 
+// Flow videos: videos/<slug>/ holds spec.json (diagram + steps), timeline.js and narration.m4a (from tools/make_audio.py).
+// The player is one self-contained page per video in dist/videos/<slug>/, embedded in the document with an iframe.
+const videoDir = join(here, 'videos');
+const playerTpl = readFileSync(join(videoDir, 'player', 'template.html'), 'utf8');
+const playerCss = readFileSync(join(videoDir, 'player', 'engine.css'), 'utf8');
+const playerJs = readFileSync(join(videoDir, 'player', 'engine.js'), 'utf8');
+function buildVideo(slug, title) {
+  const dir = join(videoDir, slug);
+  if (!existsSync(join(dir, 'spec.json')) || !existsSync(join(dir, 'timeline.js'))) return null;
+  const spec = readFileSync(join(dir, 'spec.json'), 'utf8');
+  const timeline = readFileSync(join(dir, 'timeline.js'), 'utf8');
+  const total = JSON.parse(timeline.replace(/^window\.TIMELINE=/, '').replace(/;\s*$/, '')).total;
+  const out = join(here, 'dist', 'videos', slug);
+  mkdirSync(out, { recursive: true });
+  const html = playerTpl
+    .replace('<!--TITLE-->', esc(title))
+    .replace('/*CSS*/', playerCss)
+    .replace('/*SPEC*/', 'window.SPEC=' + spec.trim() + ';')
+    .replace('/*TIMELINE*/', timeline.trim())
+    .replace('/*ENGINE*/', () => playerJs);
+  writeFileSync(join(out, 'index.html'), html);
+  copyFileSync(join(dir, 'narration.m4a'), join(out, 'narration.m4a'));
+  const min = Math.floor(total / 60), sec = Math.round(total % 60);
+  return { src: `videos/${slug}/index.html`, duration: `${min}:${String(sec).padStart(2, '0')}` };
+}
+const videoFigure = (v, title) =>
+  `<figure class="video">` +
+  `<div class="video-frame"><iframe src="${v.src}" title="${esc(title)}" loading="lazy" allow="fullscreen" allowfullscreen></iframe></div>` +
+  `<figcaption><span class="video-meta">Видео: flow сценариите стъпка по стъпка · ${v.duration} мин · английска озвучка</span>` +
+  `<button type="button" class="zoom-btn video-fs">Цял екран</button>` +
+  `<a class="zoom-btn" href="${v.src}" target="_blank" rel="noopener">Отвори отделно ↗</a></figcaption>` +
+  `</figure>`;
+
 const wrapTables = (html) => html.replace(/<table>/g, '<div class="table-wrap"><table>').replace(/<\/table>/g, '</table></div>');
 
 const pages = manifest.pages.map((p) => {
   const md = readFileSync(join(root, p.file), 'utf8');
   const headings = [];
   const page = { ...p, title: p.short };
-  const html = wrapTables(makeMarked(page, headings).parse(md));
+  let html = wrapTables(makeMarked(page, headings).parse(md));
+  const video = buildVideo(p.slug, page.title);
+  // The video sits right under the page title, above the architecture diagram.
+  if (video) html = html.replace('</header>', '</header>' + videoFigure(video, page.title));
   const diagrams = (html.match(/class="diagram"/g) || []).length;
-  return { ...page, html, headings, diagrams };
+  return { ...page, html, headings, diagrams, video: !!video };
 });
 
 const famColor = (f) => `--fam-${f.id}`;
@@ -240,6 +276,7 @@ mkdirSync(join(here, 'dist'), { recursive: true });
 writeFileSync(join(here, 'dist', 'index.html'), out);
 const kb = (Buffer.byteLength(out) / 1024).toFixed(0);
 const totalDiagrams = [...pages, ...patternPages].reduce((a, p) => a + p.diagrams, 0) + 1;
+console.log(`videos: ${pages.filter((p) => p.video).map((p) => p.slug).join(', ') || 'none'}`);
 console.log(`dist/index.html: ${kb} KB shell + ${pages.length} page files + ${patternPages.length} pattern files in dist/pages/, ${totalDiagrams} diagrams`);
 for (const p of pages) console.log(`  ${p.slug.padEnd(16)} ${String(p.diagrams).padStart(2)} diagrams  ${p.headings.length} sections`);
 console.log(`  catalog: ${catalog.families.map((f) => `${f.name} ${f.patterns.length}`).join(', ')}`);

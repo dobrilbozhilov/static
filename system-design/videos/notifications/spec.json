@@ -1,0 +1,885 @@
+{
+ "intro": {
+  "chapter": "Intro",
+  "kicker": "System Design · Flow walkthrough",
+  "title": "Notification system<br><em>OTP, campaigns, DLQ</em>",
+  "subtitle": "One event in, millions of messages out: outbox, priority topics, idempotent workers and a dead-letter queue you can replay.",
+  "chips": [
+   {
+    "text": "Public API",
+    "kind": "sync"
+   },
+   {
+    "text": "Postgres outbox",
+    "kind": "sync"
+   },
+   {
+    "text": "Kafka · critical / bulk",
+    "kind": "async"
+   },
+   {
+    "text": "Fan-out Step",
+    "kind": "async"
+   },
+   {
+    "text": "Preference & Rules",
+    "kind": "async"
+   },
+   {
+    "text": "Template Service",
+    "kind": "async"
+   },
+   {
+    "text": "Notification Workers",
+    "kind": "async"
+   },
+   {
+    "text": "Twilio · FCM · SES",
+    "kind": "read"
+   },
+   {
+    "text": "DLQ + Replay",
+    "kind": "bad"
+   }
+  ],
+  "cues": [
+   {
+    "cap": "Designing a notification system: push, email and SMS at scale, scenario by scenario.",
+    "say": "Designing a notification system: push, email and S M S at scale, scenario by scenario."
+   },
+   {
+    "cap": "The transport is the easy part. The hard parts: never lose a message, never send it twice, keep a two-million-person campaign from blocking a login code, and replay failures safely."
+   }
+  ]
+ },
+ "nodes": [
+  {
+   "id": "product",
+   "label": "Product",
+   "sub": "auth service",
+   "type": "client",
+   "x": 150,
+   "y": 240
+  },
+  {
+   "id": "api",
+   "label": "Public API",
+   "sub": "validate · 202",
+   "x": 390,
+   "y": 240
+  },
+  {
+   "id": "pg",
+   "label": "Postgres",
+   "sub": "alerts · outbox",
+   "type": "store",
+   "x": 630,
+   "y": 240
+  },
+  {
+   "id": "relay",
+   "label": "Outbox Relayer",
+   "sub": "stream / CDC",
+   "x": 870,
+   "y": 240
+  },
+  {
+   "id": "kafka",
+   "label": "Kafka",
+   "sub": "critical · bulk",
+   "type": "broker",
+   "x": 1130,
+   "y": 240
+  },
+  {
+   "id": "rules",
+   "label": "Preference &\nRules Service",
+   "sub": "opt-out · quiet",
+   "x": 390,
+   "y": 390
+  },
+  {
+   "id": "fanout",
+   "label": "Fan-out Step",
+   "sub": "batches of 1 000",
+   "x": 630,
+   "y": 390
+  },
+  {
+   "id": "redis",
+   "label": "Redis",
+   "sub": "dedup · limits",
+   "type": "store",
+   "x": 870,
+   "y": 390
+  },
+  {
+   "id": "tpl",
+   "label": "Template\nService",
+   "sub": "channel · lang",
+   "x": 630,
+   "y": 540
+  },
+  {
+   "id": "workers",
+   "label": "Notification\nWorkers",
+   "sub": "per channel",
+   "x": 1130,
+   "y": 540
+  },
+  {
+   "id": "sms",
+   "label": "Twilio",
+   "sub": "SMS · Vonage",
+   "type": "external",
+   "x": 870,
+   "y": 540
+  },
+  {
+   "id": "inbox",
+   "label": "In-app Inbox DB",
+   "sub": "badge · history",
+   "type": "store",
+   "x": 630,
+   "y": 700
+  },
+  {
+   "id": "pushmail",
+   "label": "FCM · SES",
+   "sub": "push · email",
+   "type": "external",
+   "x": 870,
+   "y": 700
+  },
+  {
+   "id": "dlq",
+   "label": "Kafka DLQ",
+   "sub": "notifications-dlq",
+   "type": "broker",
+   "x": 390,
+   "y": 700
+  },
+  {
+   "id": "admin",
+   "label": "Admin Service",
+   "sub": "DLQ · Replay",
+   "x": 150,
+   "y": 700
+  },
+  {
+   "id": "status",
+   "label": "Delivery Status\nConsumer",
+   "sub": "webhooks",
+   "x": 1130,
+   "y": 840
+  }
+ ],
+ "lanes": [
+  {
+   "text": "SYNC WRITE · 202 IN MS",
+   "x": 318,
+   "y": 195,
+   "kind": "sync"
+  },
+  {
+   "text": "ASYNC · WORKERS · DLQ",
+   "x": 60,
+   "y": 585,
+   "kind": "async"
+  }
+ ],
+ "edges": [
+  {
+   "id": "pa",
+   "from": "product",
+   "to": "api",
+   "label": "HTTPS"
+  },
+  {
+   "id": "ap",
+   "from": "api",
+   "to": "pg",
+   "label": "SQL tx"
+  },
+  {
+   "id": "pr",
+   "from": "pg",
+   "to": "relay",
+   "label": "CDC",
+   "dash": true
+  },
+  {
+   "id": "rk",
+   "from": "relay",
+   "to": "kafka",
+   "label": "produce",
+   "dash": true
+  },
+  {
+   "id": "kf",
+   "from": "kafka",
+   "to": "fanout",
+   "label": "consume",
+   "dash": true,
+   "via": [
+    [
+     1020,
+     322
+    ],
+    [
+     680,
+     322
+    ]
+   ],
+   "at": 0.5,
+   "dy": -14
+  },
+  {
+   "id": "fr",
+   "from": "fanout",
+   "to": "rules",
+   "label": "gRPC"
+  },
+  {
+   "id": "ft",
+   "from": "fanout",
+   "to": "tpl",
+   "label": "gRPC",
+   "dx": 40
+  },
+  {
+   "id": "fx",
+   "from": "fanout",
+   "to": "redis",
+   "label": "SET NX"
+  },
+  {
+   "id": "kw",
+   "from": "kafka",
+   "to": "workers",
+   "label": "consume",
+   "dash": true,
+   "dx": 56
+  },
+  {
+   "id": "ws",
+   "from": "workers",
+   "to": "sms",
+   "label": "HTTPS"
+  },
+  {
+   "id": "wp",
+   "from": "workers",
+   "to": "pushmail",
+   "label": "HTTPS",
+   "at": 0.5,
+   "dy": -22
+  },
+  {
+   "id": "wi",
+   "from": "workers",
+   "to": "inbox"
+  },
+  {
+   "id": "wd",
+   "from": "workers",
+   "to": "dlq",
+   "label": "after N retries",
+   "dash": true,
+   "via": [
+    [
+     1130,
+     632
+    ],
+    [
+     390,
+     632
+    ]
+   ],
+   "at": 0.5,
+   "dy": -14
+  },
+  {
+   "id": "da",
+   "from": "dlq",
+   "to": "admin",
+   "label": "consume",
+   "dash": true
+  },
+  {
+   "id": "ak",
+   "from": "admin",
+   "to": "kafka",
+   "label": "Replay",
+   "dash": true,
+   "via": [
+    [
+     150,
+     470
+    ],
+    [
+     270,
+     470
+    ],
+    [
+     270,
+     165
+    ],
+    [
+     1130,
+     165
+    ]
+   ],
+   "at": 0.5,
+   "dy": -14
+  },
+  {
+   "id": "ss",
+   "from": "sms",
+   "to": "status",
+   "label": "webhook",
+   "dash": true,
+   "at": 0.6,
+   "dx": 36
+  },
+  {
+   "id": "ps",
+   "from": "pushmail",
+   "to": "status",
+   "label": "webhook",
+   "dash": true,
+   "at": 0.45,
+   "dy": 16
+  },
+  {
+   "id": "sp",
+   "from": "status",
+   "to": "pg",
+   "label": "UPDATE status",
+   "dash": true,
+   "via": [
+    [
+     1130,
+     905
+    ],
+    [
+     510,
+     905
+    ],
+    [
+     510,
+     315
+    ]
+   ],
+   "at": 0.75,
+   "dy": 0,
+   "dx": -40
+  }
+ ],
+ "scenes": [
+  {
+   "id": "arch",
+   "chapter": "Architecture",
+   "kicker": "01 · The map",
+   "title": "Eight services, one durable log, three paths",
+   "steps": [
+    {
+     "cap": "The write is synchronous and tiny: a product calls Public API over HTTPS, the API stores the alert and an outbox row in one Postgres transaction and returns 202.",
+     "focus": [
+      "product",
+      "api",
+      "pg"
+     ],
+     "title": "Write path",
+     "proto": [
+      "HTTPS REST",
+      "SQL transaction",
+      "202 Accepted"
+     ],
+     "note": "The caller waits milliseconds. Nothing is sent yet, but nothing can be lost: the alert and the event are one atomic write."
+    },
+    {
+     "cap": "Everything else is asynchronous: Outbox Relayer moves rows into Kafka, Fan-out Step expands events into batches with preferences, dedup and templates, and per-channel Notification Workers call the providers.",
+     "focus": [
+      "relay",
+      "kafka",
+      "fanout",
+      "rules",
+      "redis",
+      "tpl",
+      "workers"
+     ],
+     "tone": "async",
+     "title": "Transport path",
+     "proto": [
+      "Kafka · critical / bulk",
+      "gRPC helpers",
+      "Redis SET NX"
+     ],
+     "note": "Two backpressure points: the relayer reads as a stream, and the Fan-out consumer regulates with batch size and <b>pause() / resume()</b>."
+    },
+    {
+     "cap": "Providers answer later through webhooks into Delivery Status Consumer, and everything that fails ends up in a dead-letter queue that Admin Service can replay.",
+     "focus": [
+      "sms",
+      "pushmail",
+      "inbox",
+      "status",
+      "dlq",
+      "admin"
+     ],
+     "tone": "read",
+     "title": "Delivery, status, failures",
+     "proto": [
+      "HTTPS webhooks",
+      "Kafka DLQ",
+      "Replay"
+     ],
+     "note": "Incoming webhook traffic is about the same size as outgoing sends, and the DLQ is a daily volume, not an exception."
+    }
+   ]
+  },
+  {
+   "id": "otp",
+   "chapter": "OTP code",
+   "kicker": "02 · Scenario 1",
+   "title": "A login code, from 202 to DELIVERED",
+   "steps": [
+    {
+     "cap": "A user logs in. The product's auth service calls POST /notifications with event type otp, the recipient and the code.",
+     "say": "A user logs in. The product's auth service calls post slash notifications with event type O T P, the recipient and the code.",
+     "edges": [
+      "pa"
+     ],
+     "proto": [
+      "HTTPS REST"
+     ],
+     "code": "POST /notifications\n{ event_type: 'otp', user: 'u42', channel: 'sms',\n  data: { code: '493 117' }, expires_at: '+5 min' }",
+     "note": "Products publish <b>events</b>, not messages. The notification system decides channel, text and timing."
+    },
+    {
+     "cap": "Public API validates the event and, in a single SQL transaction, inserts the alert and an outbox row. It returns 202 in milliseconds: nothing is sent yet, but nothing can be lost.",
+     "say": "Public A P I validates the event and, in a single S Q L transaction, inserts the alert and an outbox row. It returns two-oh-two in milliseconds: nothing is sent yet, but nothing can be lost.",
+     "edges": [
+      "ap"
+     ],
+     "proto": [
+      "SQL transaction",
+      "202 Accepted"
+     ],
+     "code": "BEGIN;\nINSERT INTO alerts (id, type, user_id, status)\n  VALUES ('al_91', 'otp', 'u42', 'CREATED');\nINSERT INTO outbox (event_id, priority, payload)\n  VALUES ('evt_91', 'critical', {...});\nCOMMIT;   → 202 Accepted",
+     "note": "Writing to Postgres and then to Kafka are two operations; a crash between them would lose the alert. <b>The outbox makes them one.</b>",
+     "mark": {
+      "node": "pg",
+      "text": "CREATED",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "Outbox Relayer streams the new row with pg-query-stream, or Debezium reads it from the WAL, and publishes it to notifications-critical: a separate topic from marketing, with its own workers and its own provider quota.",
+     "say": "Outbox Relayer streams the new row with P G query stream, or Debezium reads it from the write-ahead log, and publishes it to notifications critical: a separate topic from marketing, with its own workers and its own provider quota.",
+     "edges": [
+      "pr",
+      "rk"
+     ],
+     "proto": [
+      "pg-query-stream / CDC",
+      "Kafka · notifications-critical"
+     ],
+     "code": "SELECT * FROM outbox WHERE published_at IS NULL\n→ produce notifications-critical\n  { event_id: 'evt_91', type: 'otp', user: 'u42' }\n→ UPDATE outbox SET published_at = NOW()",
+     "note": "<b>Backpressure point 1:</b> the relayer reads as a stream, so a burst of a million rows never fills its memory.",
+     "mark": {
+      "node": "kafka",
+      "text": "critical",
+      "kind": "async"
+     }
+    },
+    {
+     "cap": "Fan-out Step pulls the message from Kafka. There is one recipient, so it only asks Preference & Rules over gRPC. OTP is transactional: it ignores opt-out and quiet hours and is never throttled.",
+     "say": "Fan-out Step pulls the message from Kafka. There is one recipient, so it only asks Preference and Rules over G R P C. O T P is transactional: it ignores opt-out and quiet hours and is never throttled.",
+     "edges": [
+      "kf",
+      "fr"
+     ],
+     "proto": [
+      "Kafka consumer · pause / resume",
+      "gRPC"
+     ],
+     "code": "consume notifications-critical (pull)\n→ gRPC Rules.Resolve(user: 'u42', type: 'otp')\n← { channel: 'sms', lang: 'bg',\n    quiet_hours: ignored, throttle: exempt }",
+     "note": "Preferences are cached in Redis in front of the Preferences DB, because they are read on every single notification.",
+     "mark": {
+      "node": "rules",
+      "text": "sms · bg",
+      "kind": "async"
+     }
+    },
+    {
+     "cap": "It sets a dedup key in Redis with SET NX, so a redelivered event cannot produce a second SMS, and asks Template Service for the text in the user's language.",
+     "say": "It sets a dedup key in Redis with set N X, so a redelivered event cannot produce a second S M S, and asks Template Service for the text in the user's language.",
+     "edges": [
+      "fx",
+      "ft"
+     ],
+     "proto": [
+      "Redis SET NX",
+      "gRPC"
+     ],
+     "code": "SET notif:evt_91:u42:sms 1 NX EX 600  → OK\n→ gRPC Template.Render('otp', 'bg', { code })\n← 'Вашият код за вход е 493 117'",
+     "note": "Kafka is at-least-once, so the consumer must be idempotent. <b>Exactly-once does not exist end to end.</b>",
+     "mark": {
+      "node": "redis",
+      "text": "dedup OK",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "The rendered message goes back through Kafka as a batch for the SMS workers. A worker pulls it only when it has a free slot, so a spike waits in the topic instead of crashing the pool.",
+     "say": "The rendered message goes back through Kafka as a batch for the S M S workers. A worker pulls it only when it has a free slot, so a spike waits in the topic instead of crashing the pool.",
+     "edges": [
+      "-kf",
+      "kw"
+     ],
+     "title": "Fan-out → Kafka → SMS Worker",
+     "proto": [
+      "Kafka · sms-critical",
+      "pull consumer"
+     ],
+     "code": "produce sms-critical\n  { to: '+359 88 …', body, dedup_key: 'evt_91-u42' }\n→ SMS Worker consumes (pull, batch of 1)",
+     "note": "<b>Backpressure point 2:</b> the worker pool scales on consumer lag; the topic absorbs the burst."
+    },
+    {
+     "cap": "The SMS Worker calls Twilio over HTTPS with a dedup key, behind a rate limiter and a circuit breaker. If we retry, Twilio does not send and bill a second SMS.",
+     "say": "The S M S Worker calls Twilio over H T T P S with a dedup key, behind a rate limiter and a circuit breaker. If we retry, Twilio does not send and bill a second S M S.",
+     "edges": [
+      "ws"
+     ],
+     "proto": [
+      "HTTPS REST",
+      "rate limit · circuit breaker"
+     ],
+     "code": "POST https://api.twilio.com/2010-04-01/.../Messages\nclient reference: evt_91-u42   (dedup at provider)\n← 201 { sid: 'SM8f…', status: 'queued' }",
+     "note": "Failover: a second provider (Vonage) behind the breaker, chosen per country.",
+     "mark": {
+      "node": "sms",
+      "text": "201 queued",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "On a 2xx the worker records SENT and commits the Kafka offset. A 200 from the provider means 'accepted', not 'the user got it'.",
+     "say": "On a two x x the worker records sent and commits the Kafka offset. A two hundred from the provider means accepted, not the user got it.",
+     "focus": [
+      "workers",
+      "pg"
+     ],
+     "title": "Worker → Postgres",
+     "proto": [
+      "SQL UPDATE",
+      "commit offset"
+     ],
+     "code": "UPDATE alerts SET status = 'SENT',\n       provider_id = 'SM8f…'\n WHERE id = 'al_91';\ncommit offset (sms-critical)",
+     "mark": {
+      "node": "pg",
+      "text": "SENT",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "Seconds later Twilio calls our webhook with delivered. Delivery Status Consumer checks the signature, answers 200 immediately and stores the event idempotently by provider message id.",
+     "say": "Seconds later Twilio calls our webhook with delivered. Delivery Status Consumer checks the signature, answers two hundred immediately and stores the event idempotently by provider message I D.",
+     "edges": [
+      "ss"
+     ],
+     "proto": [
+      "HTTPS webhook · at-least-once",
+      "HMAC signature"
+     ],
+     "code": "POST /webhooks/twilio\nX-Twilio-Signature: …   ✓ verified\n{ sid: 'SM8f…', status: 'delivered' }\nINSERT INTO delivery_events (sid, status)\n  ON CONFLICT DO NOTHING;   → 200",
+     "note": "Providers resend webhooks too, so this consumer is idempotent by <b>provider_message_id</b>.",
+     "mark": {
+      "node": "status",
+      "text": "signature ✓",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Finally it updates the alert to DELIVERED in Postgres. From 202 to DELIVERED should take seconds; the most important alarm in the system is critical-topic lag above thirty seconds.",
+     "say": "Finally it updates the alert to delivered in Postgres. From two-oh-two to delivered should take seconds; the most important alarm in the system is critical topic lag above thirty seconds.",
+     "edges": [
+      "sp"
+     ],
+     "proto": [
+      "SQL UPDATE"
+     ],
+     "code": "UPDATE alerts SET status = 'DELIVERED',\n       delivered_at = NOW()\n WHERE provider_id = 'SM8f…';\n\nSLO: event → DELIVERED, P99 < 10 s (critical)",
+     "mark": {
+      "node": "pg",
+      "text": "DELIVERED",
+      "kind": "good"
+     }
+    }
+   ]
+  },
+  {
+   "id": "campaign",
+   "chapter": "2M campaign",
+   "kicker": "03 · Scenario 2",
+   "title": "A campaign to two million people",
+   "steps": [
+    {
+     "cap": "Marketing launches 'New course' to every subscriber. That is one event with a recipient rule, not two million requests. The relayer routes it to notifications-bulk.",
+     "say": "Marketing launches New course to every subscriber. That is one event with a recipient rule, not two million requests. The relayer routes it to notifications bulk.",
+     "edges": [
+      "pa",
+      "ap",
+      "pr",
+      "rk"
+     ],
+     "tone": "async",
+     "title": "One event, one rule",
+     "proto": [
+      "HTTPS REST",
+      "outbox",
+      "Kafka · notifications-bulk"
+     ],
+     "code": "POST /notifications\n{ event_type: 'campaign', template: 'new_course',\n  rule: 'subscribers', priority: 'bulk' }\n→ outbox → notifications-bulk",
+     "mark": {
+      "node": "kafka",
+      "text": "bulk",
+      "kind": "async"
+     }
+    },
+    {
+     "cap": "Fan-out Step snapshots the subscriber list and splits it into batches of a thousand recipients, each batch a separate Kafka message, so two thousand batches spread across every worker.",
+     "edges": [
+      "kf",
+      "-kf"
+     ],
+     "title": "Fan-out: 2 000 batches",
+     "proto": [
+      "snapshot",
+      "Kafka · email-bulk"
+     ],
+     "code": "snapshot subscribers → 2 000 000 ids\nfor each 1 000 ids:\n  produce email-bulk { event: 'evt_92', batch: k }\n→ 2 000 messages",
+     "note": "The list is a snapshot; someone who unsubscribes a second later is caught by the rules check at send time.",
+     "mark": {
+      "node": "fanout",
+      "text": "2 000 batches",
+      "kind": "async"
+     }
+    },
+    {
+     "cap": "For every recipient it checks preferences: marketing requires consent, quiet hours postpone, throttling folds the 37th notification of the day into a digest; then dedup and template.",
+     "say": "For every recipient it checks preferences: marketing requires consent, quiet hours postpone, throttling folds the thirty-seventh notification of the day into a digest; then dedup and template.",
+     "edges": [
+      "fr",
+      "fx",
+      "ft"
+     ],
+     "proto": [
+      "gRPC",
+      "Redis sliding window",
+      "SET NX"
+     ],
+     "code": "Rules.Resolve(u, 'campaign')\n→ consent? quiet hours (local tz)? sent today < 36?\nSET notif:evt_92:u:email 1 NX EX 3600\nTemplate.Render('new_course', lang)",
+     "note": "Opt-out takes effect immediately, even for messages already queued, because the check happens at send time, not at publish time.",
+     "mark": {
+      "node": "rules",
+      "text": "consent · quiet",
+      "kind": "async"
+     }
+    },
+    {
+     "cap": "Email workers send through SES with a rate limit; when the provider answers 429 they slow down. The bulk pool never touches the critical quota.",
+     "say": "Email workers send through S E S with a rate limit; when the provider answers four twenty-nine they slow down. The bulk pool never touches the critical quota.",
+     "edges": [
+      "kw",
+      "wp"
+     ],
+     "proto": [
+      "Kafka · email-bulk",
+      "HTTPS · rate limited"
+     ],
+     "code": "POST https://email.amazonaws.com/ SendEmail\n← 429 Too Many Requests → backoff, slow down\nthroughput: 3 300 / s at peak",
+     "mark": {
+      "node": "pushmail",
+      "text": "429 → slow down",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "If an OTP arrives meanwhile, it travels on notifications-critical with its own workers and does not wait behind the campaign. In a provider incident, the first action is pausing the bulk consumer group.",
+     "say": "If an O T P arrives meanwhile, it travels on notifications critical with its own workers and does not wait behind the campaign. In a provider incident, the first action is pausing the bulk consumer group.",
+     "edges": [
+      "pa",
+      "ap",
+      "pr",
+      "rk",
+      "kf"
+     ],
+     "tone": "sync",
+     "title": "OTP during the campaign",
+     "proto": [
+      "notifications-critical",
+      "separate consumer group"
+     ],
+     "code": "notifications-critical  lag: 0.4 s   ✓\nnotifications-bulk      lag: 38 min\nincident → pause consumer group 'bulk'",
+     "note": "A shared topic would put the login code 40 minutes behind the campaign.",
+     "mark": {
+      "node": "kafka",
+      "text": "critical first",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Before the real launch the campaign runs in dry-run: fan-out and rules execute fully, but the worker writes to a would_send table instead of calling the provider, so marketing sees the exact count.",
+     "focus": [
+      "fanout",
+      "workers"
+     ],
+     "tone": "read",
+     "title": "Dry run and kill switch",
+     "proto": [
+      "dry_run",
+      "kill switch"
+     ],
+     "code": "mode: dry_run\nINSERT INTO would_send (event, user_id, channel)\n→ 1 937 412 rows, 0 provider calls\n\nkill switch: campaign.cancelled → workers skip",
+     "mark": {
+      "node": "workers",
+      "text": "0 sends",
+      "kind": "read"
+     }
+    }
+   ]
+  },
+  {
+   "id": "dlq",
+   "chapter": "Failures & Replay",
+   "kicker": "04 · Scenario 3",
+   "title": "Retry, dead-letter queue, replay",
+   "steps": [
+    {
+     "cap": "SendGrid returns 503 for an email. The worker does not block the partition by waiting: it publishes the message to notifications-retry with a next attempt time and commits the offset.",
+     "say": "SendGrid returns five-oh-three for an email. The worker does not block the partition by waiting: it publishes the message to notifications retry with a next attempt time and commits the offset.",
+     "edges": [
+      "kw",
+      "wp!"
+     ],
+     "title": "Transient error",
+     "proto": [
+      "503 · timeout · 429",
+      "Kafka · notifications-retry"
+     ],
+     "code": "POST SendGrid /v3/mail/send → 503\n→ produce notifications-retry\n  { ..., attempt: 1, next_attempt_at: now + 2 s }\ncommit offset   (partition keeps flowing)",
+     "mark": {
+      "node": "pushmail",
+      "text": "503",
+      "kind": "bad"
+     }
+    },
+    {
+     "cap": "Retries use exponential backoff with jitter: two, four, eight seconds. After five failures, or immediately on a permanent error such as an invalid address, the message goes to notifications-dlq with the original payload and the error.",
+     "focus": [
+      "kafka",
+      "workers"
+     ],
+     "tone": "bad",
+     "title": "Backoff, then give up",
+     "proto": [
+      "exponential backoff + jitter",
+      "5 attempts"
+     ],
+     "code": "attempts: 2 s · 4 s · 8 s · 16 s · 32 s (± jitter)\n5xx / 429 / timeout → retry\n4xx invalid address → DLQ immediately, no retry",
+     "note": "A notification that was correctly <b>not</b> sent (opt-out, quiet hours, duplicate) is SUPPRESSED, not failed. It never goes to the DLQ."
+    },
+    {
+     "cap": "The dead-letter queue is a daily volume, not an exception: at one percent failure that is half a million messages a day.",
+     "edges": [
+      "wd"
+     ],
+     "tone": "bad",
+     "proto": [
+      "Kafka · notifications-dlq"
+     ],
+     "code": "produce notifications-dlq\n{ payload, error: 'sendgrid 503', attempts: 5,\n  first_failed_at, expires_at }",
+     "mark": {
+      "node": "dlq",
+      "text": "~500k / day",
+      "kind": "bad"
+     }
+    },
+    {
+     "cap": "Admin Service consumes the DLQ, records each message in failed_alerts and raises an alarm in Slack. Developers review them in the Admin Dashboard.",
+     "edges": [
+      "da"
+     ],
+     "proto": [
+      "Kafka consumer",
+      "SQL",
+      "HTTPS → Slack"
+     ],
+     "code": "consume notifications-dlq\nINSERT INTO failed_alerts (event_id, user_id, error)\nPOST https://slack.com/api/chat.postMessage\n  '#notif-ops: 512 311 failed, sendgrid 503'",
+     "mark": {
+      "node": "admin",
+      "text": "Slack alarm",
+      "kind": "bad"
+     }
+    },
+    {
+     "cap": "When the provider recovers, someone presses Replay. Admin Service publishes the failed messages back into the main topic in batches at a configurable rate, through dedup again, skipping anything past its expires_at, so yesterday's OTP is never sent today.",
+     "say": "When the provider recovers, someone presses Replay. Admin Service publishes the failed messages back into the main topic in batches at a configurable rate, through dedup again, skipping anything past its expires at, so yesterday's O T P is never sent today.",
+     "edges": [
+      "ak"
+     ],
+     "tone": "good",
+     "proto": [
+      "Replay · rate limited",
+      "dedup + expires_at"
+     ],
+     "code": "replay 512 311 → batches of 1 000 at 200 / s\nskip if expires_at < NOW()\nproduce notifications-bulk { ...original payload }\n→ dedup SET NX again → workers",
+     "note": "'Replay all' at full speed would be a self-inflicted DDoS on the provider.",
+     "mark": {
+      "node": "kafka",
+      "text": "replayed",
+      "kind": "good"
+     }
+    }
+   ]
+  }
+ ],
+ "recap": {
+  "chapter": "Recap",
+  "title": "What to say in the interview",
+  "closing": "200 from the provider<br>means <em>accepted</em>,<br>not delivered.",
+  "items": [
+   {
+    "text": "Outbox: alert + event in one transaction, 202 in milliseconds",
+    "kind": "sync",
+    "cap": "To sum up. The outbox commits the alert and the event together and returns 202 in milliseconds.",
+    "say": "To sum up. The outbox commits the alert and the event together and returns two-oh-two in milliseconds."
+   },
+   {
+    "text": "Priority topics: critical never waits behind bulk",
+    "kind": "async",
+    "cap": "Separate critical and bulk topics, with separate workers and provider quotas, so a login code never waits behind a campaign."
+   },
+   {
+    "text": "Idempotent at every hop: Redis SET NX + provider dedup key",
+    "kind": "good",
+    "cap": "Exactly-once does not exist, so every hop is idempotent: a Redis SET NX key and a dedup key at the provider.",
+    "say": "Exactly-once does not exist, so every hop is idempotent: a Redis set N X key and a dedup key at the provider."
+   },
+   {
+    "text": "Retry topic → DLQ → Replay, with backoff and expiry",
+    "kind": "bad",
+    "cap": "Retries go to their own topic, failures to a dead-letter queue, and replay runs through dedup and expiry at a controlled rate."
+   },
+   {
+    "text": "Webhooks are the real status: delivered, bounced, unsubscribed",
+    "kind": "read",
+    "cap": "And the provider's 200 means accepted, not delivered. The webhooks are the real status.",
+    "say": "And the provider's two hundred means accepted, not delivered. The webhooks are the real status."
+   }
+  ]
+ }
+}

@@ -1,0 +1,775 @@
+{
+ "intro": {
+  "chapter": "Intro",
+  "kicker": "System Design · Flow walkthrough",
+  "title": "Online trading game<br><em>HIGH / LOW on live prices</em>",
+  "subtitle": "One owner per game, NATS as the only phone line, resync instead of replay.",
+  "chips": [
+   {
+    "text": "Gateway BFF",
+    "kind": "sync"
+   },
+   {
+    "text": "Realtime edge",
+    "kind": "read"
+   },
+   {
+    "text": "NATS core + JetStream",
+    "kind": "async"
+   },
+   {
+    "text": "Game node",
+    "kind": "sync"
+   },
+   {
+    "text": "Price ingest",
+    "kind": "read"
+   },
+   {
+    "text": "Workers",
+    "kind": "async"
+   },
+   {
+    "text": "Valkey",
+    "kind": "sync"
+   },
+   {
+    "text": "Postgres",
+    "kind": "async"
+   }
+  ],
+  "cues": [
+   {
+    "cap": "Designing an online HIGH/LOW trading game with real-time prices, scenario by scenario.",
+    "say": "Designing an online high low trading game with real-time prices, scenario by scenario."
+   },
+   {
+    "cap": "Every bet is money, and every price tick must reach thousands of browsers within milliseconds. The trick: keep each game in exactly one process, and let NATS do all the talking."
+   }
+  ]
+ },
+ "nodes": [
+  {
+   "id": "browser",
+   "label": "Browser",
+   "sub": "React SPA",
+   "type": "client",
+   "x": 150,
+   "y": 390
+  },
+  {
+   "id": "lb",
+   "label": "Load balancer",
+   "sub": "/api · /ws",
+   "x": 400,
+   "y": 390
+  },
+  {
+   "id": "gw",
+   "label": "Gateway BFF",
+   "sub": "auth · join · bet",
+   "x": 620,
+   "y": 240
+  },
+  {
+   "id": "edge",
+   "label": "Realtime edge",
+   "sub": "sockets · fan-out",
+   "x": 620,
+   "y": 540
+  },
+  {
+   "id": "nats",
+   "label": "NATS",
+   "sub": "core + JetStream",
+   "type": "broker",
+   "x": 860,
+   "y": 390
+  },
+  {
+   "id": "valkey",
+   "label": "Valkey",
+   "sub": "snapshots · leases",
+   "type": "store",
+   "x": 1150,
+   "y": 240
+  },
+  {
+   "id": "games",
+   "label": "Game node",
+   "sub": "owner of game 101",
+   "x": 1150,
+   "y": 390
+  },
+  {
+   "id": "workers",
+   "label": "Workers",
+   "sub": "persist · ranking",
+   "x": 1150,
+   "y": 540
+  },
+  {
+   "id": "pg",
+   "label": "Postgres",
+   "sub": "system of record",
+   "type": "store",
+   "x": 1150,
+   "y": 690
+  },
+  {
+   "id": "ingest",
+   "label": "Price ingest",
+   "sub": "active-passive",
+   "x": 860,
+   "y": 690
+  },
+  {
+   "id": "feed",
+   "label": "Exchange feed",
+   "sub": "WebSocket",
+   "type": "external",
+   "x": 590,
+   "y": 690
+  },
+  {
+   "id": "admin",
+   "label": "Admin API",
+   "sub": "backoffice",
+   "x": 400,
+   "y": 840
+  }
+ ],
+ "lanes": [
+  {
+   "text": "PLAYER PATH",
+   "x": 300,
+   "y": 195,
+   "kind": "sync"
+  },
+  {
+   "text": "PRICES",
+   "x": 640,
+   "y": 790,
+   "kind": "read"
+  },
+  {
+   "text": "BACKGROUND · JETSTREAM",
+   "x": 1240,
+   "y": 790,
+   "kind": "async",
+   "anchor": "end"
+  }
+ ],
+ "edges": [
+  {
+   "id": "bl",
+   "from": "browser",
+   "to": "lb",
+   "label": "HTTPS"
+  },
+  {
+   "id": "lg",
+   "from": "lb",
+   "to": "gw",
+   "label": "/api",
+   "at": 0.5,
+   "dx": -34
+  },
+  {
+   "id": "le",
+   "from": "lb",
+   "to": "edge",
+   "label": "/ws · WSS",
+   "kind": "read",
+   "at": 0.5,
+   "dx": -44
+  },
+  {
+   "id": "gn",
+   "from": "gw",
+   "to": "nats",
+   "label": "request",
+   "at": 0.5,
+   "dy": -14
+  },
+  {
+   "id": "ng",
+   "from": "nats",
+   "to": "games",
+   "label": "game.cmd.101"
+  },
+  {
+   "id": "gv",
+   "from": "games",
+   "to": "valkey",
+   "label": "SET snapshot"
+  },
+  {
+   "id": "gwv",
+   "from": "gw",
+   "to": "valkey",
+   "label": "GET snapshot"
+  },
+  {
+   "id": "gp",
+   "from": "games",
+   "to": "nats",
+   "label": "frames · events",
+   "dash": true,
+   "via": [
+    [
+     1000,
+     300
+    ]
+   ],
+   "at": 0.5,
+   "dy": -14
+  },
+  {
+   "id": "ne",
+   "from": "nats",
+   "to": "edge",
+   "label": "frames · price",
+   "dash": true,
+   "kind": "read",
+   "at": 0.5,
+   "dy": 16
+  },
+  {
+   "id": "nw",
+   "from": "nats",
+   "to": "workers",
+   "label": "JetStream",
+   "dash": true,
+   "at": 0.55,
+   "dy": 16
+  },
+  {
+   "id": "wp",
+   "from": "workers",
+   "to": "pg",
+   "label": "SQL",
+   "dash": true,
+   "dx": 34
+  },
+  {
+   "id": "fi",
+   "from": "feed",
+   "to": "ingest",
+   "label": "WS feed",
+   "kind": "read"
+  },
+  {
+   "id": "in",
+   "from": "ingest",
+   "to": "nats",
+   "label": "price.BTC",
+   "kind": "read",
+   "dx": 58
+  },
+  {
+   "id": "an",
+   "from": "admin",
+   "to": "nats",
+   "label": "commands",
+   "dash": true,
+   "at": 0.5
+  }
+ ],
+ "scenes": [
+  {
+   "id": "arch",
+   "chapter": "Architecture",
+   "kicker": "01 · The map",
+   "title": "Six services, one bus, two stores",
+   "steps": [
+    {
+     "cap": "The player path: one live WebSocket to Realtime edge for the news, and REST calls to Gateway BFF for the actions. Both enter through a single load balancer.",
+     "focus": [
+      "browser",
+      "lb",
+      "gw",
+      "edge"
+     ],
+     "title": "Player path",
+     "proto": [
+      "HTTPS REST · JSON",
+      "WSS"
+     ],
+     "note": "Both front services are stateless. Gateway BFF validates and forwards; Realtime edge only holds sockets and writes nowhere."
+    },
+    {
+     "cap": "In the middle sits NATS, the only way services talk: request-reply to the Game node that owns a game, pub/sub for live frames, JetStream for durable events. Price ingest reads the exchange feed and publishes every tick once.",
+     "focus": [
+      "nats",
+      "games",
+      "valkey",
+      "ingest",
+      "feed"
+     ],
+     "tone": "async",
+     "title": "NATS and the owners",
+     "proto": [
+      "request/reply",
+      "publish frames.*",
+      "JetStream events.*"
+     ],
+     "note": "Each game has exactly <b>one</b> owner process with the ledger in memory. Valkey holds snapshots and leases so an owner can be replaced."
+    },
+    {
+     "cap": "Behind it, Workers consume JetStream events and write Postgres, the system of record. Admin API sends commands over the same bus. Nothing on the player's path waits for any of this.",
+     "focus": [
+      "workers",
+      "pg",
+      "admin"
+     ],
+     "tone": "async",
+     "title": "Background work",
+     "proto": [
+      "durable consumers",
+      "SQL · Drizzle"
+     ],
+     "note": "Persistence, ranking, mail and analytics are after-the-fact. The game never blocks on Postgres."
+    }
+   ]
+  },
+  {
+   "id": "bet",
+   "chapter": "Place a bet",
+   "kicker": "02 · Scenario 1",
+   "title": "What happens when a player presses HIGH",
+   "steps": [
+    {
+     "cap": "The player presses HIGH. The browser sends POST /bets with the amount, the direction and an Idempotency-Key: a unique id generated before the first attempt, so a retry after a dropped connection cannot place the bet twice.",
+     "say": "The player presses high. The browser sends post slash bets with the amount, the direction and an idempotency key: a unique I D generated before the first attempt, so a retry after a dropped connection cannot place the bet twice.",
+     "edges": [
+      "bl",
+      "lg"
+     ],
+     "title": "Browser → Gateway BFF",
+     "proto": [
+      "HTTPS REST",
+      "Zod validation",
+      "Idempotency-Key"
+     ],
+     "code": "POST /api/games/101/bets\nIdempotency-Key: 9c1e…f4\n{ side: 'HIGH', amount: 500, asset: 'BTC' }",
+     "note": "Gateway BFF validates the JSON and checks the session in Valkey, but decides nothing itself."
+    },
+    {
+     "cap": "Gateway BFF does not look up a registry. It sends a NATS request on the subject game.cmd.101 and waits up to 300 milliseconds for a reply.",
+     "say": "Gateway B F F does not look up a registry. It sends a nats request on the subject game dot command dot one-oh-one and waits up to three hundred milliseconds for a reply.",
+     "edges": [
+      "gn"
+     ],
+     "proto": [
+      "NATS request/reply",
+      "timeout 300 ms"
+     ],
+     "code": "nc.request('game.cmd.101',\n  { type: 'placeBet', key: '9c1e…f4',\n    side: 'HIGH', amount: 500 },\n  { timeout: 300 })",
+     "note": "Subject-based routing replaces service discovery: the subject <b>is</b> the address."
+    },
+    {
+     "cap": "NATS delivers it to the single subscriber of that subject: the Game node that owns game 101. If no node is subscribed, the request fails at once with 'no responders' instead of waiting for the timeout.",
+     "say": "Nats delivers it to the single subscriber of that subject: the Game node that owns game one-oh-one. If no node is subscribed, the request fails at once with no responders instead of waiting for the timeout.",
+     "edges": [
+      "ng"
+     ],
+     "proto": [
+      "single subscriber",
+      "no responders → 503"
+     ],
+     "code": "subscribe game.cmd.101     -- exactly one owner\n→ no responders → 503 'try again' to the player",
+     "mark": {
+      "node": "games",
+      "text": "owner · epoch 1",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "The owner checks everything in memory: is the game running, does the player have the balance, has the minimum time between bets passed, is the idempotency key new. Then it takes the amount and appends the bet to its in-memory ledger.",
+     "focus": [
+      "games"
+     ],
+     "title": "Game node decides in memory",
+     "proto": [
+      "no locks",
+      "< 1 ms"
+     ],
+     "code": "if (seen(key)) return previousReply\nassert(game.running && balance >= 500)\nledger.debit(player, 500)\nbets.push({ id: 771, side: 'HIGH',\n  price: 64 210.5, expires: now + 30 s })",
+     "note": "One process per game means no distributed lock around money: requests for a game are serialised by the owner.",
+     "mark": {
+      "node": "games",
+      "text": "bet #771 accepted",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "The reply travels back the same way: NATS to Gateway, Gateway to the browser. 200 with the bet, or a 4xx with the reason. The player sees the bet immediately, from this response.",
+     "say": "The reply travels back the same way: nats to Gateway, Gateway to the browser. Two hundred with the bet, or a four x x with the reason. The player sees the bet immediately, from this response.",
+     "edges": [
+      "-ng",
+      "-gn",
+      "-lg",
+      "-bl"
+     ],
+     "tone": "good",
+     "title": "Reply → Browser",
+     "proto": [
+      "NATS reply",
+      "HTTP 200"
+     ],
+     "code": "reply { ok: true, bet: { id: 771, price: 64210.5,\n        expires_at } }\n→ HTTP 200 (or 409 { reason: 'cooldown' })",
+     "mark": {
+      "node": "browser",
+      "text": "bet shown",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "In the background the owner writes a snapshot of the game to Valkey with a pipeline, without the reply waiting for it. A takeover or a page reload restores from this snapshot.",
+     "edges": [
+      "gv"
+     ],
+     "tone": "async",
+     "proto": [
+      "Valkey pipeline",
+      "fire and forget"
+     ],
+     "code": "pipeline.set('game:101:snapshot', state)\n-- not awaited by the reply\n-- crash window = time since last snapshot, measured",
+     "mark": {
+      "node": "valkey",
+      "text": "snapshot",
+      "kind": "async"
+     }
+    },
+    {
+     "cap": "Meanwhile Price ingest reads the exchange feed and publishes price.BTC every 250 milliseconds. Realtime edge is subscribed and fans the tick out to every open socket, including this player's.",
+     "say": "Meanwhile Price ingest reads the exchange feed and publishes price dot B T C every two hundred fifty milliseconds. Realtime edge is subscribed and fans the tick out to every open socket, including this player's.",
+     "edges": [
+      "fi",
+      "in",
+      "ne",
+      "-le",
+      "-bl"
+     ],
+     "tone": "read",
+     "title": "Price tick → every browser",
+     "proto": [
+      "NATS publish",
+      "at-most-once",
+      "250 ms"
+     ],
+     "code": "publish price.BTC { p: 64230.0, t }\nedge: for (ws of channel('price.BTC')) ws.send(frame)\n-- one active publisher (Valkey lease), slow clients coalesced",
+     "mark": {
+      "node": "browser",
+      "text": "64 230.0",
+      "kind": "read"
+     }
+    },
+    {
+     "cap": "When the bet expires, the same owner compares the settlement price with the entry price, credits the win in its ledger and publishes a frame on frames.101.",
+     "say": "When the bet expires, the same owner compares the settlement price with the entry price, credits the win in its ledger and publishes a frame on frames dot one-oh-one.",
+     "edges": [
+      "gp"
+     ],
+     "title": "Game node settles the bet",
+     "proto": [
+      "publish frames.101",
+      "fire and forget"
+     ],
+     "code": "settle #771: 64 230.0 > 64 210.5 → WON\nledger.credit(player, 950)\npublish frames.101 { bet: 771, result: 'won',\n                     balance: 10 450 }",
+     "mark": {
+      "node": "games",
+      "text": "#771 WON",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Realtime edge receives frames.101 from NATS and pushes it over the live WebSocket. Frames are at-most-once: a client that missed one resyncs from a snapshot instead of replaying a queue.",
+     "say": "Realtime edge receives frames dot one-oh-one from nats and pushes it over the live websocket. Frames are at-most-once: a client that missed one resyncs from a snapshot instead of replaying a queue.",
+     "edges": [
+      "ne",
+      "-le",
+      "-bl"
+     ],
+     "tone": "read",
+     "title": "frames.101 → Browser",
+     "proto": [
+      "NATS subscribe",
+      "WebSocket push"
+     ],
+     "code": "WS → { type: 'bet_settled', bet: 771, result: 'won',\n       balance: 10 450 }\n-- mandatory frame: never coalesced",
+     "mark": {
+      "node": "browser",
+      "text": "WON +950",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Finally the owner publishes bet_settled to JetStream with an ack, so it is durable. A Worker pulls it as a durable consumer, deduplicates by event_id and writes the result to Postgres. The game never waits for it.",
+     "say": "Finally the owner publishes bet settled to JetStream with an ack, so it is durable. A Worker pulls it as a durable consumer, deduplicates by event I D and writes the result to Postgres. The game never waits for it.",
+     "edges": [
+      "gp",
+      "nw",
+      "wp"
+     ],
+     "tone": "async",
+     "title": "JetStream → Workers → Postgres",
+     "proto": [
+      "JetStream publish + ack",
+      "durable consumer",
+      "idempotent"
+     ],
+     "code": "js.publish('events.game.101',\n  { event_id, type: 'bet_settled', bet: 771 })  -- acked\nworker: INSERT INTO bets ... ON CONFLICT (event_id) DO NOTHING",
+     "mark": {
+      "node": "pg",
+      "text": "bet 771 stored",
+      "kind": "good"
+     }
+    }
+   ]
+  },
+  {
+   "id": "owner",
+   "chapter": "New game",
+   "kicker": "03 · Scenario 2",
+   "title": "A new game and its owner",
+   "steps": [
+    {
+     "cap": "Five players wait in the lobby and Gateway BFF decides a new cash game 101 is needed. It does not ask a registry which server has room; it publishes 'new game 101' on the subject lobby.assign.",
+     "say": "Five players wait in the lobby and Gateway B F F decides a new cash game one-oh-one is needed. It does not ask a registry which server has room; it publishes new game one-oh-one on the subject lobby dot assign.",
+     "edges": [
+      "gn"
+     ],
+     "title": "Gateway BFF → NATS lobby.assign",
+     "proto": [
+      "NATS publish",
+      "no dispatcher"
+     ],
+     "code": "publish lobby.assign { gameId: 101, kind: 'cash', seats: 6 }"
+    },
+    {
+     "cap": "Every Game node with free slots subscribes to lobby.assign as a queue group, so NATS hands the message to exactly one of them, say node A. A full node leaves the group and simply cannot be picked: load-aware placement without a dispatcher.",
+     "say": "Every Game node with free slots subscribes to lobby dot assign as a queue group, so nats hands the message to exactly one of them, say node A. A full node leaves the group and simply cannot be picked: load-aware placement without a dispatcher.",
+     "edges": [
+      "ng"
+     ],
+     "title": "NATS queue group → node A",
+     "proto": [
+      "queue group",
+      "one receiver"
+     ],
+     "code": "subscribe lobby.assign, queue: 'nodes'\n-- members: A, C (B is full and unsubscribed)\n→ delivered to A",
+     "mark": {
+      "node": "games",
+      "text": "node A",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "Node A claims the game with a lease in Valkey: SET NX with a 15-second TTL and epoch 1. If a duplicate delivery made node B think the game was his, SET NX is the final judge and the second one backs off without touching anything.",
+     "say": "Node A claims the game with a lease in Valkey: set N X with a fifteen-second T T L and epoch one. If a duplicate delivery made node B think the game was his, set N X is the final judge and the second one backs off without touching anything.",
+     "edges": [
+      "gv"
+     ],
+     "title": "Node A → Valkey lease",
+     "proto": [
+      "SET NX PX",
+      "epoch 1"
+     ],
+     "code": "SET game:101:lease 'A:epoch=1' NX PX 15000\n→ OK          (A owns it)\n→ (nil)       (B loses, backs off)",
+     "mark": {
+      "node": "valkey",
+      "text": "lease A · epoch 1",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "A subscribes to game.cmd.101 and starts the game in memory: seats, balances, and bots for the empty seats as plain objects in the process. From now on Gateway dials that subject and NATS delivers to the single subscriber.",
+     "say": "A subscribes to game dot command dot one-oh-one and starts the game in memory: seats, balances, and bots for the empty seats as plain objects in the process. From now on Gateway dials that subject and nats delivers to the single subscriber.",
+     "focus": [
+      "games",
+      "nats"
+     ],
+     "title": "Node A becomes the owner",
+     "proto": [
+      "subscribe game.cmd.101",
+      "in-memory game"
+     ],
+     "code": "subscribe game.cmd.101\ngame = new Game(101, { seats, balances, bots })\nsetInterval(renewLease, 5 000)",
+     "mark": {
+      "node": "games",
+      "text": "owner · epoch 1",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Every 5 seconds A renews the lease, and every change in the game is written as a snapshot with a pipeline, so no reply to a player ever waits for Valkey.",
+     "edges": [
+      "gv"
+     ],
+     "tone": "async",
+     "title": "Lease renewal and snapshots",
+     "proto": [
+      "every 5 s",
+      "pipeline"
+     ],
+     "code": "PEXPIRE game:101:lease 15000        -- every 5 s\npipeline.set('game:101:snapshot', state)  -- on change",
+     "mark": {
+      "node": "valkey",
+      "text": "lease · snapshot",
+      "kind": "async"
+     }
+    }
+   ]
+  },
+  {
+   "id": "crash",
+   "chapter": "Node crash",
+   "kicker": "04 · Scenario 3",
+   "title": "The Game node dies mid-game",
+   "steps": [
+    {
+     "cap": "Node A stops responding: a crash, a network problem or a 20-second GC pause. Requests to game.cmd.101 time out and players get 'try again' after one second, because a bet on a 5-second-old price is a different bet.",
+     "say": "Node A stops responding: a crash, a network problem or a twenty-second G C pause. Requests to game dot command dot one-oh-one time out and players get try again after one second, because a bet on a five-second-old price is a different bet.",
+     "edges": [
+      "gn",
+      "ng!"
+     ],
+     "tone": "bad",
+     "title": "Owner A is gone",
+     "proto": [
+      "timeout 300 ms",
+      "503 fast fail"
+     ],
+     "code": "request game.cmd.101 → timeout\n→ 503 'try again'   (after 1 s, not a queue)",
+     "mark": {
+      "node": "games",
+      "text": "A unresponsive",
+      "kind": "bad"
+     }
+    },
+    {
+     "cap": "After 15 seconds the lease expires on its own. A supervisor, one process among the Workers with its own lease, notices the missing key and publishes 'game 101, takeover' on lobby.assign.",
+     "say": "After fifteen seconds the lease expires on its own. A supervisor, one process among the Workers with its own lease, notices the missing key and publishes game one-oh-one, takeover on lobby dot assign.",
+     "edges": [
+      "-nw"
+     ],
+     "focus": [
+      "valkey"
+     ],
+     "tone": "async",
+     "title": "Supervisor → NATS lobby.assign",
+     "proto": [
+      "lease TTL 15 s",
+      "publish lobby.assign"
+     ],
+     "code": "GET game:101:lease → (nil)   -- expired\npublish lobby.assign { gameId: 101, takeover: true }",
+     "marks": [
+      {
+       "node": "valkey",
+       "text": "lease expired",
+       "kind": "bad"
+      }
+     ]
+    },
+    {
+     "cap": "This time node B receives it. B takes the lease with epoch 2, reads the last snapshot from Valkey, restores the game in memory including the open bets, and subscribes to game.cmd.101.",
+     "say": "This time node B receives it. B takes the lease with epoch two, reads the last snapshot from Valkey, restores the game in memory including the open bets, and subscribes to game dot command dot one-oh-one.",
+     "edges": [
+      "ng",
+      "gv"
+     ],
+     "title": "Node B takes over",
+     "proto": [
+      "SET NX PX",
+      "epoch 2",
+      "GET snapshot"
+     ],
+     "code": "SET game:101:lease 'B:epoch=2' NX PX 15000 → OK\nGET game:101:snapshot → restore(state)\nsubscribe game.cmd.101",
+     "marks": [
+      {
+       "node": "games",
+       "text": "owner B · epoch 2",
+       "kind": "good"
+      },
+      {
+       "node": "valkey",
+       "text": "lease B · epoch 2",
+       "kind": "good"
+      }
+     ]
+    },
+    {
+     "cap": "Bets that expired during those 15 seconds are settled from the price history; if that is impossible, they are cancelled and refunded. Gateway noticed nothing: it dials the same subject and now B answers. Nothing is lost beyond the measured crash window.",
+     "say": "Bets that expired during those fifteen seconds are settled from the price history; if that is impossible, they are cancelled and refunded. Gateway noticed nothing: it dials the same subject and now B answers. Nothing is lost beyond the measured crash window.",
+     "edges": [
+      "gn",
+      "ng",
+      "-ng",
+      "-gn"
+     ],
+     "tone": "good",
+     "title": "Same subject, new owner",
+     "proto": [
+      "price history",
+      "refund if unknown"
+     ],
+     "code": "for (bet of expiredDuringGap)\n  price = history.at(bet.expires_at)\n  price ? settle(bet, price) : refund(bet)",
+     "mark": {
+      "node": "browser",
+      "text": "game continues",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "If A wakes up and tries to write a snapshot or publish a result, every message carries epoch 1 while the current epoch is 2, so it is rejected. And A, seeing it failed to renew its lease, stops the game itself. That is the protection against split brain paying the same money twice.",
+     "edges": [
+      "gv!"
+     ],
+     "tone": "bad",
+     "title": "Fencing: the old owner wakes up",
+     "proto": [
+      "epoch check",
+      "self-stop"
+     ],
+     "code": "A: SET game:101:snapshot (epoch=1)\n   → rejected, current epoch is 2\nA: renewLease failed → stop game locally",
+     "mark": {
+      "node": "games",
+      "text": "A fenced out",
+      "kind": "bad"
+     }
+    }
+   ]
+  }
+ ],
+ "recap": {
+  "chapter": "Recap",
+  "title": "What to say in the interview",
+  "closing": "The cheapest lock is<br><em>no contention.</em>",
+  "items": [
+   {
+    "text": "One owner per game: ledger in memory, no distributed locks on money",
+    "kind": "sync",
+    "cap": "To sum up. One owner per game keeps the ledger in memory, so there are no distributed locks around money."
+   },
+   {
+    "text": "NATS request/reply by subject: no registry, 300 ms timeout, no responders",
+    "kind": "async",
+    "cap": "NATS request-reply by subject replaces a service registry: 300 milliseconds timeout, and 'no responders' when nobody owns the game.",
+    "say": "Nats request-reply by subject replaces a service registry: three hundred milliseconds timeout, and no responders when nobody owns the game."
+   },
+   {
+    "text": "Queue group for placement, SET NX lease + epoch for fencing",
+    "kind": "good",
+    "cap": "A queue group places new games without a dispatcher, and a SET NX lease with an epoch fences off a dead owner that wakes up.",
+    "say": "A queue group places new games without a dispatcher, and a set N X lease with an epoch fences off a dead owner that wakes up."
+   },
+   {
+    "text": "frames.* at-most-once + resync; JetStream at-least-once + idempotent workers",
+    "kind": "read",
+    "cap": "Live frames are at-most-once with resync from a snapshot, while JetStream events are at-least-once with idempotent workers. The cheapest lock is no contention."
+   }
+  ]
+ }
+}

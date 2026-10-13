@@ -1,0 +1,784 @@
+{
+ "intro": {
+  "chapter": "Intro",
+  "kicker": "System Design · Flow walkthrough",
+  "title": "Chat system<br><em>WhatsApp / Slack-style</em>",
+  "subtitle": "Persistent sockets, a durable log and workers: one checkmark when Kafka has the message, two when Boris's phone does.",
+  "chips": [
+   {
+    "text": "WebSocket Gateway",
+    "kind": "sync"
+   },
+   {
+    "text": "Chat Service",
+    "kind": "sync"
+   },
+   {
+    "text": "Redis · sessions · seq_id",
+    "kind": "sync"
+   },
+   {
+    "text": "Kafka · acks=all",
+    "kind": "async"
+   },
+   {
+    "text": "Delivery Worker",
+    "kind": "async"
+   },
+   {
+    "text": "Persist Worker · Cassandra",
+    "kind": "async"
+   },
+   {
+    "text": "Push Worker · FCM / APNs",
+    "kind": "async"
+   },
+   {
+    "text": "API Gateway · REST resync",
+    "kind": "read"
+   }
+  ],
+  "cues": [
+   {
+    "cap": "Designing a chat system in the style of WhatsApp, Slack or Messenger, message by message."
+   },
+   {
+    "cap": "Three layers: a stateful layer that only holds the sockets, a durable log for the messages, and workers that do everything else. Let's send 'Hello' from Anna to Boris."
+   }
+  ]
+ },
+ "nodes": [
+  {
+   "id": "anna",
+   "label": "Anna · phone",
+   "sub": "sender",
+   "type": "client",
+   "x": 150,
+   "y": 230
+  },
+  {
+   "id": "boris",
+   "label": "Boris · phone",
+   "sub": "receiver",
+   "type": "client",
+   "x": 150,
+   "y": 510
+  },
+  {
+   "id": "lb",
+   "label": "L4 Load Balancer",
+   "sub": "TCP · long-lived",
+   "x": 370,
+   "y": 370
+  },
+  {
+   "id": "wsgw",
+   "label": "WebSocket\nGateway",
+   "sub": "WS-12 · WS-45 · WS-3",
+   "x": 640,
+   "y": 370
+  },
+  {
+   "id": "chat",
+   "label": "Chat Service",
+   "sub": "idem · seq_id",
+   "x": 890,
+   "y": 370
+  },
+  {
+   "id": "kafka",
+   "label": "Kafka",
+   "sub": "key = chat_id",
+   "type": "broker",
+   "x": 1130,
+   "y": 370
+  },
+  {
+   "id": "redis",
+   "label": "Redis",
+   "sub": "sessions · seq",
+   "type": "store",
+   "x": 640,
+   "y": 510
+  },
+  {
+   "id": "apigw",
+   "label": "API Gateway",
+   "sub": "auth · REST",
+   "x": 420,
+   "y": 650
+  },
+  {
+   "id": "deliver",
+   "label": "Delivery Worker",
+   "sub": "finds sessions",
+   "x": 890,
+   "y": 650
+  },
+  {
+   "id": "persist",
+   "label": "Persist\nWorker",
+   "sub": "batches",
+   "x": 1120,
+   "y": 650
+  },
+  {
+   "id": "cass",
+   "label": "Cassandra",
+   "sub": "history",
+   "type": "store",
+   "x": 1120,
+   "y": 790
+  },
+  {
+   "id": "push",
+   "label": "Push Worker",
+   "sub": "coalescing",
+   "x": 640,
+   "y": 790
+  },
+  {
+   "id": "fcm",
+   "label": "FCM / APNs",
+   "sub": "push",
+   "type": "external",
+   "x": 390,
+   "y": 790
+  }
+ ],
+ "lanes": [
+  {
+   "text": "SEND PATH · WSS → gRPC → KAFKA",
+   "x": 263,
+   "y": 200,
+   "kind": "sync"
+  },
+  {
+   "text": "ASYNC · CONSUMER GROUPS",
+   "x": 1245,
+   "y": 880,
+   "kind": "async",
+   "anchor": "end"
+  },
+  {
+   "text": "REST · HISTORY & RESYNC",
+   "x": 263,
+   "y": 880,
+   "kind": "read"
+  }
+ ],
+ "edges": [
+  {
+   "id": "al",
+   "from": "anna",
+   "to": "lb",
+   "label": "WSS"
+  },
+  {
+   "id": "bl",
+   "from": "boris",
+   "to": "lb",
+   "label": "WSS"
+  },
+  {
+   "id": "lw",
+   "from": "lb",
+   "to": "wsgw",
+   "label": "/ws"
+  },
+  {
+   "id": "wr",
+   "from": "wsgw",
+   "to": "redis",
+   "label": "HSET · SUBSCRIBE",
+   "dx": -92
+  },
+  {
+   "id": "wc",
+   "from": "wsgw",
+   "to": "chat",
+   "label": "gRPC"
+  },
+  {
+   "id": "cr",
+   "from": "chat",
+   "to": "redis",
+   "label": "SET NX · INCR",
+   "at": 0.5
+  },
+  {
+   "id": "ck",
+   "from": "chat",
+   "to": "kafka",
+   "label": "produce"
+  },
+  {
+   "id": "kd",
+   "from": "kafka",
+   "to": "deliver",
+   "label": "consume",
+   "dash": true,
+   "at": 0.3
+  },
+  {
+   "id": "kp",
+   "from": "kafka",
+   "to": "persist",
+   "label": "consume",
+   "dash": true,
+   "dx": 58
+  },
+  {
+   "id": "pc",
+   "from": "persist",
+   "to": "cass",
+   "label": "CQL batch",
+   "dx": 64
+  },
+  {
+   "id": "dr",
+   "from": "deliver",
+   "to": "redis",
+   "label": "HGETALL · PUBLISH",
+   "kind": "async",
+   "at": 0.5,
+   "dy": -16
+  },
+  {
+   "id": "dp",
+   "from": "deliver",
+   "to": "push",
+   "label": "topic push",
+   "dash": true,
+   "at": 0.5,
+   "dy": 16
+  },
+  {
+   "id": "pf",
+   "from": "push",
+   "to": "fcm",
+   "label": "HTTPS"
+  },
+  {
+   "id": "fb",
+   "from": "fcm",
+   "to": "boris",
+   "label": "notification",
+   "dash": true,
+   "at": 0.5
+  },
+  {
+   "id": "ba",
+   "from": "boris",
+   "to": "apigw",
+   "label": "HTTPS REST",
+   "kind": "read",
+   "at": 0.5,
+   "dy": -14
+  },
+  {
+   "id": "ac",
+   "from": "apigw",
+   "to": "chat",
+   "label": "gRPC",
+   "kind": "read",
+   "via": [
+    [
+     760,
+     650
+    ]
+   ],
+   "at": 0.3
+  },
+  {
+   "id": "cc",
+   "from": "chat",
+   "to": "cass",
+   "label": "CQL read",
+   "kind": "read",
+   "at": 0.5,
+   "dx": 56
+  }
+ ],
+ "scenes": [
+  {
+   "id": "arch",
+   "chapter": "Architecture",
+   "kicker": "01 · The map",
+   "title": "Stateful sockets, a durable log, stateless workers",
+   "steps": [
+    {
+     "cap": "The send path: Anna's phone talks over an already open WebSocket, through an L4 load balancer, to a WebSocket Gateway server, which calls Chat Service over gRPC; Chat Service checks Redis and writes to Kafka.",
+     "say": "The send path: Anna's phone talks over an already open websocket, through a layer four load balancer, to a WebSocket Gateway server, which calls Chat Service over G R P C; Chat Service checks Redis and writes to Kafka.",
+     "focus": [
+      "anna",
+      "lb",
+      "wsgw",
+      "chat",
+      "redis",
+      "kafka"
+     ],
+     "title": "Send path",
+     "proto": [
+      "WSS",
+      "gRPC",
+      "Redis",
+      "Kafka acks=all"
+     ],
+     "note": "Only the WebSocket Gateway holds state, and only open sockets: about 450 instances with up to 50k connections each."
+    },
+    {
+     "cap": "Everything after Kafka is asynchronous and runs as independent consumer groups: Delivery Worker finds Boris's sessions and forwards, Persist Worker writes the history to Cassandra, Push Worker notifies offline devices through FCM or APNs.",
+     "say": "Everything after Kafka is asynchronous and runs as independent consumer groups: Delivery Worker finds Boris's sessions and forwards, Persist Worker writes the history to Cassandra, Push Worker notifies offline devices through F C M or A P N s.",
+     "focus": [
+      "kafka",
+      "deliver",
+      "persist",
+      "cass",
+      "push",
+      "fcm",
+      "boris"
+     ],
+     "tone": "async",
+     "title": "Consumer groups",
+     "proto": [
+      "deliver",
+      "persist",
+      "push",
+      "index (Slack only)"
+     ],
+     "note": "Three readers of the same log: a slow Cassandra never delays delivery, and a flood of pushes never delays persistence."
+    },
+    {
+     "cap": "History and resynchronisation go over plain HTTPS REST: API Gateway, Chat Service, Cassandra. The socket is for live traffic; the log and the history are the truth.",
+     "say": "History and resynchronisation go over plain H T T P S rest: A P I Gateway, Chat Service, Cassandra. The socket is for live traffic; the log and the history are the truth.",
+     "focus": [
+      "boris",
+      "apigw",
+      "chat",
+      "cass"
+     ],
+     "tone": "read",
+     "title": "REST path",
+     "proto": [
+      "HTTPS REST",
+      "gRPC",
+      "CQL"
+     ],
+     "note": "<b>since=&lt;seq&gt;</b> is the whole resync protocol: a monotonic number per chat makes gaps and duplicates detectable on the client."
+    }
+   ]
+  },
+  {
+   "id": "send",
+   "chapter": "Send a message",
+   "kicker": "02 · Scenario 1",
+   "title": "From Anna's Enter to Boris's two checkmarks",
+   "steps": [
+    {
+     "cap": "Anna types 'Hello' and presses Enter. Her phone already has a WebSocket open to WS-Server-12, so the message travels over it, without a new TCP or TLS handshake, carrying a client_msg_id generated on the phone before the first attempt.",
+     "say": "Anna types Hello and presses Enter. Her phone already has a websocket open to W S Server twelve, so the message travels over it, without a new T C P or T L S handshake, carrying a client message I D generated on the phone before the first attempt.",
+     "edges": [
+      "al",
+      "lw"
+     ],
+     "title": "Anna → L4 LB → WS-Server-12",
+     "proto": [
+      "WSS · existing socket",
+      "client_msg_id"
+     ],
+     "code": "WS frame → WS-Server-12\n{ chat_id: 'c_77', client_msg_id: 'u-9f3c…',\n  text: 'Hello' }",
+     "note": "The L4 balancer only picked the server when the socket was opened; frames now flow over the same TCP connection."
+    },
+    {
+     "cap": "WS-Server-12 forwards the message over gRPC to Chat Service, synchronously: the socket waits for the answer.",
+     "say": "W S Server twelve forwards the message over G R P C to Chat Service, synchronously: the socket waits for the answer.",
+     "edges": [
+      "wc"
+     ],
+     "proto": [
+      "gRPC"
+     ],
+     "code": "gRPC Chat.Send(\n  chat_id: 'c_77', client_msg_id: 'u-9f3c…',\n  sender: 'anna', text: 'Hello')"
+    },
+    {
+     "cap": "Chat Service runs SET NX on the idempotency key: if the key exists, this is a retry and it returns the same seq_id as before. If it is new, INCR chat_seq gives the next number, 1042: an atomic single-threaded counter, so two messages in one chat never share a number.",
+     "say": "Chat Service runs set N X on the idempotency key: if the key exists, this is a retry and it returns the same sequence I D as before. If it is new, increment chat seq gives the next number, one thousand forty-two: an atomic single-threaded counter, so two messages in one chat never share a number.",
+     "edges": [
+      "cr"
+     ],
+     "title": "Chat Service → Redis: dedupe, then sequence",
+     "proto": [
+      "Redis SET NX",
+      "Redis INCR"
+     ],
+     "code": "SET idem:c_77:u-9f3c… 1042 NX EX 86400\n→ OK     new message\n→ (nil)  retry: return the stored seq_id\n\nINCR chat_seq:c_77 → 1042",
+     "mark": {
+      "node": "redis",
+      "text": "seq 1042",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "It writes the message to Kafka with partition key chat_id and acks=all: it waits until at least two brokers have it on disk. Log first, database later.",
+     "say": "It writes the message to Kafka with partition key chat I D and acks equals all: it waits until at least two brokers have it on disk. Log first, database later.",
+     "edges": [
+      "ck"
+     ],
+     "proto": [
+      "Kafka producer",
+      "acks=all",
+      "key = chat_id"
+     ],
+     "code": "produce messages\n  key:   'c_77'      -- same partition\n  value: { seq_id: 1042, client_msg_id,\n           sender, text }\n  acks:  all → partition 7, offset 88213",
+     "note": "No outbox here: Kafka <b>is</b> the write-ahead log. The database is filled from it afterwards.",
+     "mark": {
+      "node": "kafka",
+      "text": "offset 88213",
+      "kind": "async"
+     }
+    },
+    {
+     "cap": "Only then does Chat Service answer the WS server, and the WS server answers the phone: one checkmark, SENT. From here on Anna waits for nothing.",
+     "say": "Only then does Chat Service answer the W S server, and the W S server answers the phone: one checkmark, sent. From here on Anna waits for nothing.",
+     "edges": [
+      "-wc",
+      "-lw",
+      "-al"
+     ],
+     "tone": "good",
+     "title": "SENT: one checkmark",
+     "proto": [
+      "gRPC reply",
+      "WS frame"
+     ],
+     "code": "gRPC reply { seq_id: 1042, status: 'SENT' }\nWS → { client_msg_id: 'u-9f3c…', seq_id: 1042,\n       status: 'SENT' }",
+     "mark": {
+      "node": "anna",
+      "text": "✓ SENT",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Delivery Worker pulls the message from Kafka at its own pace and asks Redis for Boris's sessions: his phone is on WS-Server-45, his laptop on WS-Server-7.",
+     "say": "Delivery Worker pulls the message from Kafka at its own pace and asks Redis for Boris's sessions: his phone is on W S Server forty-five, his laptop on W S Server seven.",
+     "edges": [
+      "kd",
+      "dr"
+     ],
+     "tone": "async",
+     "title": "Delivery Worker finds Boris",
+     "proto": [
+      "consumer group deliver",
+      "Redis HGETALL"
+     ],
+     "code": "consumer group 'deliver'\n  ← partition 7, offset 88213\nHGETALL user_sessions:boris\n→ { phone:  'WS-Server-45',\n    laptop: 'WS-Server-7' }"
+    },
+    {
+     "cap": "It publishes the message on the Redis Pub/Sub channels ws:WS-Server-45 and ws:WS-Server-7; each server is subscribed to its own channel and writes the frame into the right socket.",
+     "say": "It publishes the message on the Redis pub sub channels for W S Server forty-five and W S Server seven; each server is subscribed to its own channel and writes the frame into the right socket.",
+     "edges": [
+      "-wr",
+      "-lw",
+      "-bl"
+     ],
+     "tone": "async",
+     "title": "Redis Pub/Sub → WS-Server-45 → Boris",
+     "proto": [
+      "Redis PUBLISH",
+      "WebSocket push"
+     ],
+     "code": "PUBLISH ws:WS-Server-45\n  { to: 'boris/phone', seq_id: 1042,\n    text: 'Hello' }\nPUBLISH ws:WS-Server-7\n  { to: 'boris/laptop', … }\n→ socket.send(frame)  -- on WS-Server-45",
+     "mark": {
+      "node": "boris",
+      "text": "received 1042",
+      "kind": "async"
+     }
+    },
+    {
+     "cap": "In parallel and independently, Persist Worker reads the same message from Kafka in another consumer group and writes it to Cassandra, partitioned by chat and time bucket, in batches, as an idempotent upsert.",
+     "edges": [
+      "kp",
+      "pc"
+     ],
+     "tone": "async",
+     "title": "Persist Worker, in parallel",
+     "proto": [
+      "consumer group persist",
+      "CQL batch"
+     ],
+     "code": "consumer group 'persist' ← offset 88213\nINSERT INTO messages\n  (chat_id, bucket, seq_id, sender, text)\nVALUES ('c_77', '2026-10', 1042,\n        'anna', 'Hello');\n-- batch of 500, same key = same row",
+     "mark": {
+      "node": "cass",
+      "text": "1042 stored",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "When Boris's phone receives the message, it returns an ACK with the seq_id over its socket; WS-Server-45 publishes a DELIVERED event to Kafka through the same path.",
+     "say": "When Boris's phone receives the message, it returns an ack with the sequence I D over its socket; W S Server forty-five publishes a delivered event to Kafka through the same path.",
+     "edges": [
+      "bl",
+      "lw",
+      "wc",
+      "ck"
+     ],
+     "tone": "good",
+     "title": "ACK → DELIVERED event",
+     "proto": [
+      "WS frame",
+      "gRPC",
+      "Kafka"
+     ],
+     "code": "WS ← { ack: 1042 }\nproduce messages\n  key: 'c_77'\n  value: { type: 'DELIVERED', seq_id: 1042, by: 'boris' }"
+    },
+    {
+     "cap": "The same delivery path carries the event to Anna's phone: the second checkmark.",
+     "edges": [
+      "kd",
+      "dr",
+      "-wr",
+      "-lw",
+      "-al"
+     ],
+     "tone": "good",
+     "title": "Second checkmark",
+     "proto": [
+      "consumer group deliver",
+      "Redis PUBLISH"
+     ],
+     "code": "HGETALL user_sessions:anna\n→ { phone: 'WS-Server-12' }\nPUBLISH ws:WS-Server-12\n  { type: 'DELIVERED', seq_id: 1042 }",
+     "mark": {
+      "node": "anna",
+      "text": "✓✓ DELIVERED",
+      "kind": "good"
+     }
+    }
+   ]
+  },
+  {
+   "id": "offline",
+   "chapter": "Recipient offline",
+   "kicker": "03 · Scenario 2",
+   "title": "Boris is in airplane mode",
+   "steps": [
+    {
+     "cap": "Boris is in airplane mode and the TTL on his sessions has expired. Delivery Worker asks Redis and gets an empty hash: nowhere to deliver.",
+     "say": "Boris is in airplane mode and the T T L on his sessions has expired. Delivery Worker asks Redis and gets an empty hash: nowhere to deliver.",
+     "edges": [
+      "kd",
+      "dr"
+     ],
+     "tone": "bad",
+     "title": "No live sessions",
+     "proto": [
+      "Redis HGETALL",
+      "TTL expired"
+     ],
+     "code": "HGETALL user_sessions:boris\n→ {}    -- no heartbeat for 60 s, key expired",
+     "mark": {
+      "node": "redis",
+      "text": "no sessions",
+      "kind": "bad"
+     }
+    },
+    {
+     "cap": "So it publishes to the Kafka topic push and commits its offset right away, after the attempt, not after an ACK from the phone. Otherwise one offline user would block the partition for everyone else in it.",
+     "say": "So it publishes to the Kafka topic push and commits its offset right away, after the attempt, not after an ack from the phone. Otherwise one offline user would block the partition for everyone else in it.",
+     "edges": [
+      "dp"
+     ],
+     "tone": "async",
+     "title": "Delivery Worker → topic push → Push Worker",
+     "proto": [
+      "Kafka · topic push",
+      "commit after attempt"
+     ],
+     "code": "produce push\n  { user: 'boris', chat_id: 'c_77',\n    seq_id: 1042, preview: 'Anna' }\ncommit offset 88213\n-- the message is safe in Kafka + Cassandra",
+     "note": "The message is not lost: it waits in the log and in the history until Boris comes back."
+    },
+    {
+     "cap": "Push Worker reads it and sends a notification through FCM or APNs: only 'New message from Anna', never the text. Push is best effort, not a transport channel.",
+     "say": "Push Worker reads it and sends a notification through F C M or A P N s: only New message from Anna, never the text. Push is best effort, not a transport channel.",
+     "edges": [
+      "pf",
+      "fb"
+     ],
+     "tone": "async",
+     "title": "Push Worker → FCM / APNs → Boris",
+     "proto": [
+      "HTTPS",
+      "FCM / APNs"
+     ],
+     "code": "POST https://fcm.googleapis.com/v1/\n     projects/…/messages:send\n{ token: 'd8e…',\n  notification:\n    { title: 'Anna', body: 'New message' } }",
+     "mark": {
+      "node": "boris",
+      "text": "push shown",
+      "kind": "async"
+     }
+    },
+    {
+     "cap": "If 20 messages arrive while he is offline, Push Worker folds them into one notification. The messages themselves stay in Kafka and Cassandra, waiting for him.",
+     "say": "If twenty messages arrive while he is offline, Push Worker folds them into one notification. The messages themselves stay in Kafka and Cassandra, waiting for him.",
+     "focus": [
+      "push",
+      "cass"
+     ],
+     "tone": "async",
+     "title": "Coalescing",
+     "proto": [
+      "debounce 30 s"
+     ],
+     "code": "20 push events for boris within 30 s\n→ 1 notification: 'Anna: 20 new messages'",
+     "mark": {
+      "node": "push",
+      "text": "20 → 1",
+      "kind": "async"
+     }
+    }
+   ]
+  },
+  {
+   "id": "reconnect",
+   "chapter": "Reconnect & resync",
+   "kicker": "04 · Scenario 3",
+   "title": "Boris lands: reconnect and catch up",
+   "steps": [
+    {
+     "cap": "Boris lands and his phone connects to any WS server, say WS-Server-3. No sticky sessions: the registry in Redis says where everyone is, so any server will do. The server registers the session with HSET.",
+     "say": "Boris lands and his phone connects to any W S server, say W S Server three. No sticky sessions: the registry in Redis says where everyone is, so any server will do. The server registers the session with H set.",
+     "edges": [
+      "bl",
+      "lw",
+      "wr"
+     ],
+     "title": "Boris → L4 LB → WS-Server-3 → Redis",
+     "proto": [
+      "WSS",
+      "Redis HSET + TTL"
+     ],
+     "code": "WSS /ws → WS-Server-3\nHSET user_sessions:boris phone WS-Server-3\nEXPIRE user_sessions:boris 60\n-- refreshed by every heartbeat",
+     "mark": {
+      "node": "redis",
+      "text": "boris → WS-3",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "The phone remembers last_seen_seq = 1039 for the chat with Anna and asks over REST: GET /chats/c_77/messages?since=1039. API Gateway forwards it over gRPC to Chat Service, which reads messages 1040, 1041 and 1042 from Cassandra.",
+     "say": "The phone remembers last seen sequence one thousand thirty-nine for the chat with Anna and asks over rest: get the messages since one thousand thirty-nine. A P I Gateway forwards it over G R P C to Chat Service, which reads messages one thousand forty, forty-one and forty-two from Cassandra.",
+     "edges": [
+      "ba",
+      "ac",
+      "cc"
+     ],
+     "tone": "read",
+     "title": "GET /messages?since=1039",
+     "proto": [
+      "HTTPS REST",
+      "gRPC",
+      "CQL"
+     ],
+     "code": "GET /chats/c_77/messages?since=1039\n→ gRPC Chat.History(\n    chat_id: 'c_77', since: 1039)\nSELECT * FROM messages\n WHERE chat_id = 'c_77'\n   AND bucket = '2026-10'\n   AND seq_id > 1039 ORDER BY seq_id;",
+     "mark": {
+      "node": "cass",
+      "text": "1040 … 1042",
+      "kind": "read"
+     }
+    },
+    {
+     "cap": "The three messages come back; the phone merges them and moves last_seen_seq to 1042.",
+     "say": "The three messages come back; the phone merges them and moves last seen sequence to one thousand forty-two.",
+     "edges": [
+      "-cc",
+      "-ac",
+      "-ba"
+     ],
+     "tone": "good",
+     "title": "Chat Service → Boris",
+     "proto": [
+      "HTTP 200"
+     ],
+     "code": "200 OK\n[ { seq_id: 1040, … },\n  { seq_id: 1041, … },\n  { seq_id: 1042, … } ]\nlast_seen_seq = 1042",
+     "mark": {
+      "node": "boris",
+      "text": "synced",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Later, if a message with seq_id 1045 arrives over the WebSocket while the phone has only seen up to 1043, the phone itself notices the gap, 1044 is missing, and fetches it. Duplicates from at-least-once delivery are recognised by client_msg_id.",
+     "say": "Later, if a message with sequence one thousand forty-five arrives over the websocket while the phone has only seen up to one thousand forty-three, the phone itself notices the gap, forty-four is missing, and fetches it. Duplicates from at-least-once delivery are recognised by client message I D.",
+     "focus": [
+      "boris",
+      "wsgw"
+     ],
+     "tone": "read",
+     "title": "Gap detection on the client",
+     "proto": [
+      "monotonic seq_id",
+      "dedupe by client_msg_id"
+     ],
+     "code": "received seq_id 1045, last_seen 1043\n→ gap: 1044\nGET /chats/c_77/messages?since=1043\nseen client_msg_id? → drop duplicate",
+     "mark": {
+      "node": "boris",
+      "text": "gap: 1044",
+      "kind": "read"
+     }
+    },
+    {
+     "cap": "In Slack with 200 channels the phone does not ask each one: GET /sync?since=cursor returns the last seq_id per channel. And on reconnect clients use backoff with jitter, so 50 000 of them do not come back in the same millisecond after a server restart.",
+     "say": "In Slack with two hundred channels the phone does not ask each one: a single sync request returns the last sequence per channel. And on reconnect clients use backoff with jitter, so fifty thousand of them do not come back in the same millisecond after a server restart.",
+     "focus": [
+      "boris",
+      "lb",
+      "apigw"
+     ],
+     "tone": "sync",
+     "title": "Resync cursor, reconnect with jitter",
+     "proto": [
+      "GET /sync",
+      "backoff + jitter"
+     ],
+     "code": "GET /sync?since=<cursor>\n→ { c_77: 1042, c_78: 311, c_79: 9087, … }\n\nreconnect in 1 s × 2^n + random(0 … 1 s)",
+     "note": "A thundering herd of reconnects is a self-inflicted outage; jitter spreads it over seconds."
+    }
+   ]
+  }
+ ],
+ "recap": {
+  "chapter": "Recap",
+  "title": "What to say in the interview",
+  "closing": "The log is the truth.<br><em>The socket is just a wire.</em>",
+  "items": [
+   {
+    "text": "Send over the open WebSocket, then gRPC to Chat Service",
+    "kind": "sync",
+    "cap": "To sum up. A message goes over the already open WebSocket and then over gRPC to Chat Service.",
+    "say": "To sum up. A message goes over the already open websocket and then over G R P C to Chat Service."
+   },
+   {
+    "text": "SET NX for idempotency, INCR for a monotonic seq_id per chat",
+    "kind": "sync",
+    "cap": "SET NX on the client's message id makes retries safe, and INCR gives a monotonic sequence number per chat.",
+    "say": "Set N X on the client's message I D makes retries safe, and increment gives a monotonic sequence number per chat."
+   },
+   {
+    "text": "Kafka acks=all before SENT: log first, database later",
+    "kind": "async",
+    "cap": "Kafka with acks=all comes before the SENT checkmark: log first, database later.",
+    "say": "Kafka with acks equals all comes before the sent checkmark: log first, database later."
+   },
+   {
+    "text": "Independent consumer groups: deliver, persist, push, index",
+    "kind": "async",
+    "cap": "Delivery, persistence, push and search are independent consumer groups, so a slow database never delays delivery."
+   },
+   {
+    "text": "Session registry in Redis, resync by seq_id, backoff with jitter",
+    "kind": "read",
+    "cap": "And a session registry in Redis, resync by sequence number and backoff with jitter handle offline users and reconnects. The log is the truth; the socket is just a wire."
+   }
+  ]
+ }
+}

@@ -226,6 +226,15 @@
   .mmd .mmd-error { color: var(--ink); font: 13px/1.5 var(--mono); white-space: pre-wrap; max-width: 100%; }
   .mmd .mmd-error b { color: #c0392b; display: block; margin-bottom: 8px; }
   .loading { color: var(--muted); font-size: 15px; }
+  /* Flow video: a 16:9 player plus its 44px chapter bar, embedded from dist/videos/<slug>/. */
+  .video { margin: 0 0 24px; background: #000; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .video-frame { position: relative; padding-top: calc(56.25% + 44px); background: #000; }
+  .video-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+  .video figcaption { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line); background: var(--surface-2); }
+  .video-meta { flex: 1; min-width: 180px; font: 500 12.5px/1.4 var(--sans); color: var(--muted); }
+  .video figcaption a.zoom-btn { text-decoration: none; }
+  .video-fs[hidden] { display: none; }
+
   .diagram figcaption { display: flex; justify-content: flex-end; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line); background: var(--surface-2); }
   .zoom-btn { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 4px 10px; cursor: pointer; font: 500 12.5px var(--sans); color: var(--muted); }
   .zoom-btn:hover { color: var(--ink); border-color: var(--muted); }
@@ -538,6 +547,9 @@
       (next ? `<a class="next" href="#${next}"><span>Следващ</span><strong>${META[next].title}</strong></a>` : '');
   }
 
+  function setupVideos(article) {
+    if (!canFullscreen) $$('.video-fs', article).forEach((b) => { b.hidden = true; });
+  }
   async function loadPage(article) {
     if (!article.dataset.src || article.dataset.loaded) return;
     try {
@@ -545,6 +557,7 @@
       if (!res.ok) throw new Error('HTTP ' + res.status);
       article.innerHTML = await res.text();
       article.dataset.loaded = '1';
+      setupVideos(article);
       if (io) $$('h2[id]', article).forEach((h) => io.observe(h));
     } catch (err) {
       article.innerHTML = '<p class="loading">Документът не се зареди (' + String(err.message || err).replace(/[&<]/g, '') + '). Опитай да презаредиш страницата.</p>';
@@ -555,6 +568,8 @@
     if (!pages[slug]) slug = 'home';
     if (current === slug) return;
     current = slug;
+    // A playing flow video keeps talking from a hidden page otherwise.
+    $$('.video iframe').forEach((f) => { try { f.contentWindow.postMessage('pause', '*'); } catch (e) {} });
     for (const s in pages) pages[s].hidden = s !== slug;
     // Pattern pages (cat-*) are not in the menu; the catalog entry stands in for them.
     const navSlug = slug.startsWith('cat-') ? 'catalog' : slug;
@@ -644,9 +659,18 @@
     }
     zoomSvg = null; zoomHome = null;
   }
+  // Flow video: fullscreen where the browser allows it (iOS Safari does not, so the "open separately" link stays).
+  const canFullscreen = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.video-fs');
+    if (!btn) return;
+    const frame = $('iframe', btn.closest('.video'));
+    if (frame && frame.requestFullscreen) frame.requestFullscreen();
+    else if (frame && frame.webkitRequestFullscreen) frame.webkitRequestFullscreen();
+  });
   document.addEventListener('click', (e) => {
     const btn = e.target.closest('.zoom-btn');
-    if (!btn) return;
+    if (!btn || btn.classList.contains('video-fs') || btn.tagName === 'A') return;
     const fig = btn.closest('.diagram');
     const svg = $('.mmd svg', fig);
     if (!svg) return;

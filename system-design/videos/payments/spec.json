@@ -1,0 +1,852 @@
+{
+ "intro": {
+  "chapter": "Intro",
+  "kicker": "System Design · Flow walkthrough",
+  "title": "Payment system<br><em>Stripe / PayPal-style</em>",
+  "subtitle": "Twelve transactions per second is easy. Never charging twice, never losing a cent and proving it in an audit is the design.",
+  "chips": [
+   {
+    "text": "API Gateway",
+    "kind": "sync"
+   },
+   {
+    "text": "Payment Service",
+    "kind": "sync"
+   },
+   {
+    "text": "Redis idempotency",
+    "kind": "sync"
+   },
+   {
+    "text": "Risk Service",
+    "kind": "sync"
+   },
+   {
+    "text": "Stripe (PSP)",
+    "kind": "sync"
+   },
+   {
+    "text": "Postgres + outbox",
+    "kind": "sync"
+   },
+   {
+    "text": "Webhook Handler",
+    "kind": "async"
+   },
+   {
+    "text": "Ledger Service",
+    "kind": "async"
+   },
+   {
+    "text": "Kafka · payment-events",
+    "kind": "async"
+   },
+   {
+    "text": "Reconciliation Job",
+    "kind": "read"
+   }
+  ],
+  "cues": [
+   {
+    "cap": "Designing a payment system and digital wallet, scenario by scenario."
+   },
+   {
+    "cap": "The volume is small: 12 transactions per second, 120 at peak. The hard part is correctness: idempotency at every hop, double-entry bookkeeping instead of a balance column, and accepting that exactly-once does not exist.",
+    "say": "The volume is small: twelve transactions per second, a hundred and twenty at peak. The hard part is correctness: idempotency at every hop, double-entry bookkeeping instead of a balance column, and accepting that exactly-once does not exist."
+   }
+  ]
+ },
+ "nodes": [
+  {
+   "id": "client",
+   "label": "Client",
+   "sub": "checkout page",
+   "type": "client",
+   "x": 150,
+   "y": 240
+  },
+  {
+   "id": "gw",
+   "label": "API Gateway",
+   "sub": "auth · rate limit",
+   "x": 620,
+   "y": 240
+  },
+  {
+   "id": "redis",
+   "label": "Redis",
+   "sub": "idem keys · 24 h",
+   "type": "store",
+   "x": 380,
+   "y": 390
+  },
+  {
+   "id": "pay",
+   "label": "Payment Service",
+   "sub": "intent · state",
+   "x": 620,
+   "y": 390
+  },
+  {
+   "id": "pg",
+   "label": "Postgres",
+   "sub": "payments · outbox",
+   "type": "store",
+   "x": 880,
+   "y": 390
+  },
+  {
+   "id": "kafka",
+   "label": "Kafka",
+   "sub": "payment-events",
+   "type": "broker",
+   "x": 1120,
+   "y": 390
+  },
+  {
+   "id": "hook",
+   "label": "Webhook\nHandler",
+   "sub": "signature · dedup",
+   "x": 140,
+   "y": 540
+  },
+  {
+   "id": "psp",
+   "label": "Stripe",
+   "sub": "PSP · 3DS",
+   "type": "external",
+   "x": 380,
+   "y": 540
+  },
+  {
+   "id": "risk",
+   "label": "Risk Service",
+   "sub": "rules < 50 ms",
+   "x": 620,
+   "y": 540
+  },
+  {
+   "id": "ledger",
+   "label": "Ledger Service",
+   "sub": "double entry",
+   "x": 880,
+   "y": 540
+  },
+  {
+   "id": "workers",
+   "label": "Workers",
+   "sub": "mail · payouts",
+   "x": 1120,
+   "y": 540
+  },
+  {
+   "id": "recon",
+   "label": "Reconciliation\nJob",
+   "sub": "nightly 03:00",
+   "x": 160,
+   "y": 690
+  },
+  {
+   "id": "ledgerdb",
+   "label": "Ledger DB",
+   "sub": "append-only",
+   "type": "store",
+   "x": 880,
+   "y": 690
+  },
+  {
+   "id": "ops",
+   "label": "Ops Dashboard",
+   "sub": "manual fixes",
+   "type": "external",
+   "x": 160,
+   "y": 840
+  }
+ ],
+ "lanes": [
+  {
+   "text": "SYNC · PAYMENT PATH",
+   "x": 309,
+   "y": 195,
+   "kind": "sync"
+  },
+  {
+   "text": "ASYNC · WEBHOOKS · OUTBOX",
+   "x": 1000,
+   "y": 848,
+   "kind": "async",
+   "anchor": "end"
+  }
+ ],
+ "edges": [
+  {
+   "id": "cg",
+   "from": "client",
+   "to": "gw",
+   "label": "HTTPS · Idempotency-Key"
+  },
+  {
+   "id": "gp",
+   "from": "gw",
+   "to": "pay",
+   "label": "gRPC",
+   "dx": 42
+  },
+  {
+   "id": "pr",
+   "from": "pay",
+   "to": "redis",
+   "label": "SET NX"
+  },
+  {
+   "id": "pk",
+   "from": "pay",
+   "to": "risk",
+   "label": "50 ms",
+   "dx": 40
+  },
+  {
+   "id": "pp",
+   "from": "pay",
+   "to": "psp",
+   "label": "HTTPS",
+   "at": 0.5,
+   "dy": -16
+  },
+  {
+   "id": "pg_",
+   "from": "pay",
+   "to": "pg",
+   "label": "SQL tx"
+  },
+  {
+   "id": "pl",
+   "from": "pay",
+   "to": "ledger",
+   "label": "Transfer",
+   "at": 0.5,
+   "dy": -16
+  },
+  {
+   "id": "pk2",
+   "from": "pg",
+   "to": "kafka",
+   "label": "outbox",
+   "dash": true
+  },
+  {
+   "id": "kw",
+   "from": "kafka",
+   "to": "workers",
+   "label": "consume",
+   "dash": true,
+   "dx": 58
+  },
+  {
+   "id": "wl",
+   "from": "workers",
+   "to": "ledger",
+   "label": "gRPC"
+  },
+  {
+   "id": "ld",
+   "from": "ledger",
+   "to": "ledgerdb",
+   "label": "append",
+   "dx": 50
+  },
+  {
+   "id": "cs",
+   "from": "client",
+   "to": "psp",
+   "label": "card token",
+   "at": 0.35,
+   "dx": -40
+  },
+  {
+   "id": "ph",
+   "from": "psp",
+   "to": "hook",
+   "label": "webhook",
+   "dash": true
+  },
+  {
+   "id": "hp",
+   "from": "hook",
+   "to": "pg",
+   "label": "UPDATE state",
+   "via": [
+    [
+     140,
+     482
+    ],
+    [
+     880,
+     482
+    ]
+   ],
+   "at": 0.3,
+   "dy": -14
+  },
+  {
+   "id": "hl",
+   "from": "hook",
+   "to": "ledger",
+   "label": "gRPC Transfer",
+   "via": [
+    [
+     140,
+     615
+    ],
+    [
+     880,
+     615
+    ]
+   ],
+   "at": 0.55,
+   "dy": -14
+  },
+  {
+   "id": "pr2",
+   "from": "psp",
+   "to": "recon",
+   "label": "settlement CSV",
+   "dash": true,
+   "at": 0.55
+  },
+  {
+   "id": "rl",
+   "from": "recon",
+   "to": "ledgerdb",
+   "label": "SQL compare",
+   "at": 0.5
+  },
+  {
+   "id": "ro",
+   "from": "recon",
+   "to": "ops",
+   "label": "mismatches",
+   "dash": true,
+   "dx": 66
+  },
+  {
+   "id": "wp",
+   "from": "workers",
+   "to": "psp",
+   "label": "payouts",
+   "dash": true,
+   "via": [
+    [
+     1120,
+     880
+    ],
+    [
+     380,
+     880
+    ]
+   ],
+   "at": 0.5,
+   "dy": -14
+  }
+ ],
+ "scenes": [
+  {
+   "id": "arch",
+   "chapter": "Architecture",
+   "kicker": "01 · The map",
+   "title": "Seven services around one principle: idempotency",
+   "steps": [
+    {
+     "cap": "The synchronous path: the client calls our API with an Idempotency-Key, Payment Service checks Redis, asks Risk Service for the hard rules and calls the PSP with the same key. Card data goes straight from the browser to Stripe and never touches us.",
+     "say": "The synchronous path: the client calls our A P I with an idempotency key, Payment Service checks Redis, asks Risk Service for the hard rules and calls the P S P with the same key. Card data goes straight from the browser to Stripe and never touches us.",
+     "focus": [
+      "client",
+      "gw",
+      "pay",
+      "redis",
+      "risk",
+      "psp",
+      "pg"
+     ],
+     "title": "Sync payment path",
+     "proto": [
+      "HTTPS REST",
+      "gRPC",
+      "Redis SET NX",
+      "HTTPS → PSP"
+     ],
+     "note": "The sync answer is only <b>202 accepted</b>. The final state of a payment always comes from a webhook."
+    },
+    {
+     "cap": "The asynchronous path: signed webhooks from the PSP change the payment state, events leave through the outbox into Kafka, and every money movement becomes a double-entry transfer in Ledger Service.",
+     "say": "The asynchronous path: signed webhooks from the P S P change the payment state, events leave through the outbox into Kafka, and every money movement becomes a double-entry transfer in Ledger Service.",
+     "focus": [
+      "hook",
+      "pg",
+      "kafka",
+      "workers",
+      "ledger",
+      "ledgerdb"
+     ],
+     "tone": "async",
+     "title": "Async path",
+     "proto": [
+      "HTTPS webhooks · at-least-once",
+      "outbox → Kafka",
+      "append-only ledger"
+     ],
+     "note": "Ledger Service is separate because money is recorded as balanced entries, never as a <b>balance</b> column that gets updated."
+    },
+    {
+     "cap": "And every night Reconciliation Job compares our ledger with the PSP's settlement file; mismatches go to the Ops Dashboard.",
+     "say": "And every night Reconciliation Job compares our ledger with the P S P's settlement file; mismatches go to the Ops Dashboard.",
+     "focus": [
+      "recon",
+      "ops",
+      "psp",
+      "ledgerdb"
+     ],
+     "tone": "read",
+     "title": "Reconciliation",
+     "proto": [
+      "cron · 03:00",
+      "settlement CSV",
+      "SQL"
+     ],
+     "note": "The system is designed on the assumption that mismatches will happen; the question is how fast they are caught."
+    }
+   ]
+  },
+  {
+   "id": "pay",
+   "chapter": "Pay 100 EUR",
+   "kicker": "02 · Scenario 1",
+   "title": "A payment end to end",
+   "steps": [
+    {
+     "cap": "The customer clicks Pay 100 EUR. The browser calls POST /payments with amount, currency and an Idempotency-Key, a UUID generated on the client; the gateway authenticates and forwards it over gRPC.",
+     "say": "The customer clicks Pay one hundred euros. The browser calls post slash payments with amount, currency and an idempotency key, a U U I D generated on the client; the gateway authenticates and forwards it over G R P C.",
+     "edges": [
+      "cg",
+      "gp"
+     ],
+     "proto": [
+      "HTTPS REST",
+      "Idempotency-Key",
+      "gRPC"
+     ],
+     "code": "POST /payments\nIdempotency-Key: 9c1e…f4\n{ amount: 10000, currency: 'EUR', merchant: 'm7' }\n→ gRPC Payments.Create(...)",
+     "note": "Amounts are integers in minor units: <b>10000</b> is 100.00 EUR. Never floats."
+    },
+    {
+     "cap": "Payment Service does SET NX on the key in Redis with a 24-hour TTL. The key is new, so it continues. A UNIQUE constraint on the key in Postgres is the second line of defence.",
+     "say": "Payment Service does set N X on the key in Redis with a twenty-four hour T T L. The key is new, so it continues. A unique constraint on the key in Postgres is the second line of defence.",
+     "edges": [
+      "pr"
+     ],
+     "proto": [
+      "Redis SET NX EX 86400"
+     ],
+     "code": "SET idem:9c1e…f4 pay_51 NX EX 86400\n→ OK   (new request)",
+     "mark": {
+      "node": "redis",
+      "text": "key stored",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "It inserts a payments row in state CREATED and returns a client_secret to the browser.",
+     "say": "It inserts a payments row in state created and returns a client secret to the browser.",
+     "edges": [
+      "pg_"
+     ],
+     "proto": [
+      "SQL INSERT",
+      "UNIQUE (idempotency_key)"
+     ],
+     "code": "INSERT INTO payments\n  (id, state, amount, currency, idempotency_key)\nVALUES ('pay_51', 'CREATED', 10000, 'EUR', '9c1e…f4');\n→ { payment_id: 'pay_51', client_secret: 'cs_…' }",
+     "mark": {
+      "node": "pg",
+      "text": "CREATED",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "The browser hands the card to Stripe's iframe directly. Card numbers never pass through our servers, so the PCI audit is theirs, not ours. Stripe returns a token.",
+     "say": "The browser hands the card to Stripe's iframe directly. Card numbers never pass through our servers, so the P C I audit is theirs, not ours. Stripe returns a token.",
+     "edges": [
+      "cs"
+     ],
+     "proto": [
+      "Stripe.js · HTTPS to PSP",
+      "PCI scope: PSP"
+     ],
+     "code": "Stripe.js → tokenize(card, cvc, exp)\n← tok_visa_4242     (never seen by us)\n3DS challenge if the issuer asks",
+     "mark": {
+      "node": "psp",
+      "text": "token",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Payment Service calls Risk Service over gRPC with a 50-millisecond deadline for the hard rules: block lists, five cards from one account in a minute, card country versus IP. ML scoring runs later, asynchronously.",
+     "say": "Payment Service calls Risk Service over G R P C with a fifty millisecond deadline for the hard rules: block lists, five cards from one account in a minute, card country versus I P. M L scoring runs later, asynchronously.",
+     "edges": [
+      "pk"
+     ],
+     "proto": [
+      "gRPC · deadline 50 ms",
+      "bulkhead"
+     ],
+     "code": "gRPC Risk.Check(user, card_bin, ip, amount)\ndeadline: 50 ms\n← { decision: 'allow', score: 0.12 }\n\nML scoring: Kafka consumer, may hold capture",
+     "mark": {
+      "node": "risk",
+      "text": "allow",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Then it calls Stripe over HTTPS for authorize plus capture with the same Idempotency-Key. If our request is repeated, Stripe returns the old response instead of a second charge. Stripe answers pending.",
+     "say": "Then it calls Stripe over H T T P S for authorize plus capture with the same idempotency key. If our request is repeated, Stripe returns the old response instead of a second charge. Stripe answers pending.",
+     "edges": [
+      "pp"
+     ],
+     "proto": [
+      "HTTPS REST",
+      "same Idempotency-Key",
+      "circuit breaker"
+     ],
+     "code": "POST https://api.stripe.com/v1/payment_intents\nIdempotency-Key: 9c1e…f4\namount=10000 currency=eur capture=automatic\n← 200 { id: 'pi_7a', status: 'processing' }",
+     "mark": {
+      "node": "psp",
+      "text": "processing",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "We return 202 with the payment id. The final status does not come from this response; it comes from a webhook seconds later.",
+     "say": "We return two-oh-two with the payment I D. The final status does not come from this response; it comes from a webhook seconds later.",
+     "edges": [
+      "-gp",
+      "-cg"
+     ],
+     "tone": "good",
+     "title": "Payment Service → Client",
+     "proto": [
+      "HTTP 202 Accepted"
+     ],
+     "code": "HTTP 202 Accepted\n{ payment_id: 'pay_51', state: 'PROCESSING' }",
+     "mark": {
+      "node": "client",
+      "text": "202",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Stripe sends the webhook payment.captured. Webhook Handler verifies the HMAC signature, stores the event with INSERT ON CONFLICT DO NOTHING, and answers 200 immediately. Processing happens after the 200.",
+     "say": "Stripe sends the webhook payment captured. Webhook Handler verifies the H mac signature, stores the event with insert on conflict do nothing, and answers two hundred immediately. Processing happens after the two hundred.",
+     "edges": [
+      "ph"
+     ],
+     "proto": [
+      "HTTPS webhook · at-least-once",
+      "HMAC signature"
+     ],
+     "code": "POST /webhooks/stripe\nStripe-Signature: t=…,v1=…   ✓ verified\n{ id: 'evt_e9', type: 'payment.captured', pay_51 }\nINSERT INTO payment_events (id) VALUES ('evt_e9')\n  ON CONFLICT DO NOTHING;   → 200",
+     "mark": {
+      "node": "hook",
+      "text": "signature ✓",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Then a conditional UPDATE moves the payment to CAPTURED only from CREATED or AUTHORIZED. One row affected means the transition is ours to act on.",
+     "say": "Then a conditional update moves the payment to captured only from created or authorized. One row affected means the transition is ours to act on.",
+     "edges": [
+      "hp"
+     ],
+     "proto": [
+      "SQL · conditional UPDATE"
+     ],
+     "code": "UPDATE payments SET state = 'CAPTURED'\n WHERE id = 'pay_51'\n   AND state IN ('CREATED', 'AUTHORIZED');\n→ 1 row affected",
+     "note": "No SELECT before the UPDATE, no distributed lock: the row count is the answer.",
+     "mark": {
+      "node": "pg",
+      "text": "CAPTURED",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "It calls Ledger Service: one transfer of three entries, customer minus 10 000, merchant plus 9 710, fees plus 290. The sum is zero and the rows are append-only, never updated.",
+     "say": "It calls Ledger Service: one transfer of three entries, customer minus ten thousand, merchant plus nine thousand seven hundred and ten, fees plus two hundred and ninety. The sum is zero and the rows are append-only, never updated.",
+     "edges": [
+      "hl",
+      "ld"
+     ],
+     "proto": [
+      "gRPC Transfer",
+      "SQL tx · CHECK sum = 0"
+     ],
+     "code": "gRPC Ledger.Transfer(ref: 'pay_51'):\n  customer:u42    -10000\n  merchant:m7      +9710\n  fees:platform     +290     sum = 0\nINSERT INTO ledger_entries ... (no UPDATE, no DELETE)",
+     "note": "A balance is a report over entries, not a column. The audit trail is the data itself.",
+     "mark": {
+      "node": "ledgerdb",
+      "text": "3 entries · sum 0",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "The state change leaves through the outbox into Kafka payment-events. Workers consume it: receipt email, analytics, and batched payouts to the merchant through the PSP.",
+     "say": "The state change leaves through the outbox into Kafka payment events. Workers consume it: receipt email, analytics, and batched payouts to the merchant through the P S P.",
+     "edges": [
+      "pk2",
+      "kw",
+      "wl"
+     ],
+     "proto": [
+      "outbox relay / CDC",
+      "Kafka · payment-events",
+      "consumer groups"
+     ],
+     "code": "outbox → produce payment-events\n  { payment: 'pay_51', state: 'CAPTURED' }\nconsumers: email receipt · analytics · payouts\n→ gRPC Ledger.Transfer for payouts",
+     "mark": {
+      "node": "workers",
+      "text": "receipt sent",
+      "kind": "async"
+     }
+    }
+   ]
+  },
+  {
+   "id": "dup",
+   "chapter": "Retries & duplicates",
+   "kicker": "03 · Scenario 2",
+   "title": "A lost response and a duplicated webhook",
+   "steps": [
+    {
+     "cap": "The network drops right after we returned 202 and the browser never sees it. The user clicks Pay again. The same Idempotency-Key arrives, and SET NX says the key already exists.",
+     "say": "The network drops right after we returned two-oh-two and the browser never sees it. The user clicks Pay again. The same idempotency key arrives, and set N X says the key already exists.",
+     "edges": [
+      "cg",
+      "gp",
+      "pr"
+     ],
+     "tone": "bad",
+     "title": "Same request again",
+     "proto": [
+      "same Idempotency-Key"
+     ],
+     "code": "POST /payments\nIdempotency-Key: 9c1e…f4   (same)\nSET idem:9c1e…f4 pay_51 NX EX 86400\n→ (nil)   key exists",
+     "mark": {
+      "node": "redis",
+      "text": "exists",
+      "kind": "bad"
+     }
+    },
+    {
+     "cap": "Payment Service returns the same payment_id and the same response: no new row, no second charge. If Redis lost the key in a failover, the UNIQUE constraint in Postgres catches it. The same key with a different amount is a 422, a client error, not a second payment.",
+     "say": "Payment Service returns the same payment I D and the same response: no new row, no second charge. If Redis lost the key in a failover, the unique constraint in Postgres catches it. The same key with a different amount is a four twenty-two, a client error, not a second payment.",
+     "edges": [
+      "-gp",
+      "-cg"
+     ],
+     "tone": "good",
+     "title": "Same key → same response",
+     "proto": [
+      "cached response",
+      "UNIQUE (idempotency_key)",
+      "422 on mismatch"
+     ],
+     "code": "→ 202 { payment_id: 'pay_51' }   (stored response)\n\nUNIQUE (idempotency_key)  → second defence\nsame key, different amount → 422 Unprocessable",
+     "mark": {
+      "node": "client",
+      "text": "same pay_51",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Later Stripe delivers the same webhook evt_e9 a second time; they resend by design, at-least-once. INSERT ON CONFLICT DO NOTHING inserts nothing, processing stops, and the ledger never gets a second transfer.",
+     "say": "Later Stripe delivers the same webhook a second time; they resend by design, at least once. Insert on conflict do nothing inserts nothing, processing stops, and the ledger never gets a second transfer.",
+     "edges": [
+      "ph"
+     ],
+     "tone": "bad",
+     "title": "Duplicate webhook",
+     "proto": [
+      "at-least-once",
+      "dedup by event_id"
+     ],
+     "code": "POST /webhooks/stripe  { id: 'evt_e9', ... }  (again)\nINSERT INTO payment_events (id) VALUES ('evt_e9')\n  ON CONFLICT DO NOTHING;  → 0 rows\n→ 200, nothing else happens",
+     "mark": {
+      "node": "hook",
+      "text": "duplicate · skip",
+      "kind": "bad"
+     }
+    },
+    {
+     "cap": "Webhooks also arrive out of order. captured before authorized is accepted, because the PSP knows more than we do; the late authorized on a CAPTURED row affects zero rows and changes nothing.",
+     "say": "Webhooks also arrive out of order. Captured before authorized is accepted, because the P S P knows more than we do; the late authorized on a captured row affects zero rows and changes nothing.",
+     "edges": [
+      "ph",
+      "hp"
+     ],
+     "tone": "sync",
+     "title": "Out-of-order webhooks",
+     "proto": [
+      "conditional UPDATE"
+     ],
+     "code": "UPDATE payments SET state = 'AUTHORIZED'\n WHERE id = 'pay_51' AND state = 'CREATED';\n→ 0 rows   (already CAPTURED, ignore)",
+     "mark": {
+      "node": "pg",
+      "text": "CAPTURED · 0 rows",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "Idempotency on every hop: client to us by Idempotency-Key, us to the PSP by the same key, and the PSP to us by webhook event id.",
+     "say": "Idempotency on every hop: client to us by idempotency key, us to the P S P by the same key, and the P S P to us by webhook event I D.",
+     "focus": [
+      "client",
+      "pay",
+      "psp",
+      "hook"
+     ],
+     "tone": "read",
+     "title": "Three hops, three keys",
+     "proto": [
+      "idempotent everywhere"
+     ],
+     "code": "client → us:   Idempotency-Key  (Redis + UNIQUE)\nus → PSP:      Idempotency-Key  (same)\nPSP → us:      event_id         (ON CONFLICT)"
+    }
+   ]
+  },
+  {
+   "id": "recon",
+   "chapter": "Reconciliation",
+   "kicker": "04 · Scenario 3",
+   "title": "Nightly reconciliation and payouts",
+   "steps": [
+    {
+     "cap": "At 03:00 Reconciliation Job downloads yesterday's settlement file from Stripe: a CSV with every movement and every fee.",
+     "say": "At three in the morning Reconciliation Job downloads yesterday's settlement file from Stripe: a C S V with every movement and every fee.",
+     "edges": [
+      "pr2"
+     ],
+     "tone": "read",
+     "proto": [
+      "cron · 03:00",
+      "HTTPS or SFTP"
+     ],
+     "code": "GET /v1/reporting/report_runs/…/download\n→ settlement_2026-10-12.csv   184 312 rows",
+     "mark": {
+      "node": "recon",
+      "text": "CSV fetched",
+      "kind": "read"
+     }
+    },
+    {
+     "cap": "It compares the file row by row with ledger_entries, matching on the PSP charge id, amount and fee.",
+     "say": "It compares the file row by row with ledger entries, matching on the P S P charge I D, amount and fee.",
+     "edges": [
+      "rl"
+     ],
+     "tone": "read",
+     "proto": [
+      "SQL · batch"
+     ],
+     "code": "SELECT psp_charge_id, amount, fee\n  FROM ledger_entries\n WHERE booked_at::date = '2026-10-12';\nmatch ⟷ settlement rows"
+    },
+    {
+     "cap": "Three kinds of mismatch. A payment at Stripe we have no record of: a lost webhook that retries never delivered; we create the record and alarm. A payment we marked paid with no money at Stripe: an incident. A different amount or fee: a correcting reversing entry, never an UPDATE.",
+     "say": "Three kinds of mismatch. A payment at Stripe we have no record of: a lost webhook that retries never delivered; we create the record and alarm. A payment we marked paid with no money at Stripe: an incident. A different amount or fee: a correcting reversing entry, never an update.",
+     "focus": [
+      "recon",
+      "ledgerdb"
+     ],
+     "tone": "bad",
+     "title": "Three kinds of mismatch",
+     "proto": [
+      "reversing entries"
+     ],
+     "code": "psp only   → create record + alarm\nours only  → incident (paid, no money)\namount ≠   → reversing entry (append, no UPDATE)\n\nday poller: CREATED > 15 min → GET /payments/:id",
+     "mark": {
+      "node": "ledgerdb",
+      "text": "3 mismatches",
+      "kind": "bad"
+     }
+    },
+    {
+     "cap": "The night ends with a zero-mismatch report or a list for manual intervention in the Ops Dashboard. The system assumes mismatches will happen; the question is how fast they are caught.",
+     "edges": [
+      "ro"
+     ],
+     "tone": "bad",
+     "proto": [
+      "Ops queue",
+      "audit log"
+     ],
+     "code": "report 2026-10-12:\n  184 309 matched · 3 mismatches\n→ Ops Dashboard queue, with the raw rows",
+     "mark": {
+      "node": "ops",
+      "text": "3 to review",
+      "kind": "bad"
+     }
+    },
+    {
+     "cap": "The same job computes payouts: each merchant's balance minus a rolling reserve for chargebacks, paid in batches with the idempotent key merchant_id plus period, so a restart never pays twice.",
+     "say": "The same job computes payouts: each merchant's balance minus a rolling reserve for chargebacks, paid in batches with the idempotent key merchant I D plus period, so a restart never pays twice.",
+     "edges": [
+      "wp"
+     ],
+     "tone": "async",
+     "title": "Payouts, once",
+     "proto": [
+      "batched",
+      "key: merchant_id + period"
+     ],
+     "code": "payout m7 / 2026-10-12:\n  balance 9710 − reserve 10 % = 8739\n  Idempotency-Key: 'm7:2026-10-12'\nPOST https://api.stripe.com/v1/payouts",
+     "mark": {
+      "node": "psp",
+      "text": "payout once",
+      "kind": "good"
+     }
+    }
+   ]
+  }
+ ],
+ "recap": {
+  "chapter": "Recap",
+  "title": "What to say in the interview",
+  "closing": "Exactly-once does not exist.<br><em>Idempotency does.</em>",
+  "items": [
+   {
+    "text": "Idempotency on three hops: client → us → PSP → webhook",
+    "kind": "sync",
+    "cap": "To sum up. Idempotency on every hop: a client key, the same key to the PSP, and the event id on the webhook.",
+    "say": "To sum up. Idempotency on every hop: a client key, the same key to the P S P, and the event I D on the webhook."
+   },
+   {
+    "text": "Card data never touches us: tokenize at the PSP",
+    "kind": "good",
+    "cap": "Card data never touches our servers; the PSP tokenizes it and owns the PCI scope.",
+    "say": "Card data never touches our servers; the P S P tokenizes it and owns the P C I scope."
+   },
+   {
+    "text": "State machine with conditional UPDATEs; webhooks are the truth",
+    "kind": "async",
+    "cap": "Payment state moves only through conditional UPDATEs, driven by signed, deduplicated webhooks.",
+    "say": "Payment state moves only through conditional updates, driven by signed, deduplicated webhooks."
+   },
+   {
+    "text": "Double-entry ledger: append-only, sum = 0, balance is a report",
+    "kind": "read",
+    "cap": "Money is a double-entry ledger: append-only entries that sum to zero. A balance is a report, not a column."
+   },
+   {
+    "text": "Nightly reconciliation against the settlement file",
+    "kind": "bad",
+    "cap": "And a nightly reconciliation against the settlement file, because mismatches will happen. Exactly-once does not exist; idempotency does."
+   }
+  ]
+ }
+}

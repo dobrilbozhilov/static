@@ -1,0 +1,798 @@
+{
+ "intro": {
+  "chapter": "Intro",
+  "kicker": "System Design · Flow walkthrough",
+  "title": "Geo-proximity service<br><em>Uber / Lyft / Yelp-style</em>",
+  "subtitle": "1.25 million location writes per second, 17 000 searches per second, one hot index in memory.",
+  "chips": [
+   {
+    "text": "WS Gateway",
+    "kind": "sync"
+   },
+   {
+    "text": "Location Ingest",
+    "kind": "sync"
+   },
+   {
+    "text": "Redis GEO · H3 cells",
+    "kind": "sync"
+   },
+   {
+    "text": "Kafka",
+    "kind": "async"
+   },
+   {
+    "text": "Matching Service",
+    "kind": "read"
+   },
+   {
+    "text": "Routing Engine",
+    "kind": "read"
+   },
+   {
+    "text": "Dispatch Service",
+    "kind": "read"
+   },
+   {
+    "text": "Trip Service",
+    "kind": "read"
+   },
+   {
+    "text": "Postgres",
+    "kind": "good"
+   }
+  ],
+  "cues": [
+   {
+    "cap": "Designing a geo-proximity service, Uber-style: drivers report where they are, riders ask who is nearby."
+   },
+   {
+    "cap": "Two jobs share one index: a write path that updates 1.25 million positions per second in memory, and a read path that finds the best driver in a few hundred milliseconds. Let's follow both.",
+    "say": "Two jobs share one index: a write path that updates one point two five million positions per second in memory, and a read path that finds the best driver in a few hundred milliseconds. Let's follow both."
+   }
+  ]
+ },
+ "nodes": [
+  {
+   "id": "driver",
+   "label": "Driver App",
+   "sub": "GPS every 4 s",
+   "type": "client",
+   "x": 150,
+   "y": 240
+  },
+  {
+   "id": "wsgw",
+   "label": "WS Gateway",
+   "sub": "long-lived WSS",
+   "x": 390,
+   "y": 390
+  },
+  {
+   "id": "ingest",
+   "label": "Location Ingest",
+   "sub": "filter · map match",
+   "x": 640,
+   "y": 240
+  },
+  {
+   "id": "geo",
+   "label": "Redis GEO",
+   "sub": "H3 cell index",
+   "type": "store",
+   "x": 1150,
+   "y": 240
+  },
+  {
+   "id": "kafka",
+   "label": "Kafka",
+   "sub": "location-updates",
+   "type": "broker",
+   "x": 640,
+   "y": 390
+  },
+  {
+   "id": "surge",
+   "label": "Surge\nAggregator",
+   "sub": "per cell",
+   "x": 910,
+   "y": 390
+  },
+  {
+   "id": "history",
+   "label": "Cassandra",
+   "sub": "trip history",
+   "type": "store",
+   "x": 640,
+   "y": 540
+  },
+  {
+   "id": "matching",
+   "label": "Matching Service",
+   "sub": "candidates · ETA",
+   "x": 910,
+   "y": 540
+  },
+  {
+   "id": "routing",
+   "label": "Routing Engine",
+   "sub": "road ETA",
+   "type": "external",
+   "x": 1150,
+   "y": 410
+  },
+  {
+   "id": "rider",
+   "label": "Rider App",
+   "sub": "order a ride",
+   "type": "client",
+   "x": 150,
+   "y": 690
+  },
+  {
+   "id": "api",
+   "label": "API Gateway",
+   "sub": "auth · rate limit",
+   "x": 390,
+   "y": 690
+  },
+  {
+   "id": "dispatch",
+   "label": "Dispatch Service",
+   "sub": "offers · accept",
+   "x": 640,
+   "y": 690
+  },
+  {
+   "id": "trip",
+   "label": "Trip Service",
+   "sub": "ride state",
+   "x": 910,
+   "y": 690
+  },
+  {
+   "id": "pg",
+   "label": "Postgres",
+   "sub": "rides · offers",
+   "type": "store",
+   "x": 1150,
+   "y": 840
+  }
+ ],
+ "lanes": [
+  {
+   "text": "DRIVERS · WRITE PATH",
+   "x": 300,
+   "y": 195,
+   "kind": "sync"
+  },
+  {
+   "text": "ASYNC · KAFKA",
+   "x": 300,
+   "y": 470,
+   "kind": "async"
+  },
+  {
+   "text": "RIDERS · READ PATH",
+   "x": 300,
+   "y": 790,
+   "kind": "read"
+  }
+ ],
+ "edges": [
+  {
+   "id": "dw",
+   "from": "driver",
+   "to": "wsgw",
+   "label": "WSS",
+   "at": 0.5,
+   "dx": 30,
+   "dy": -8
+  },
+  {
+   "id": "wi",
+   "from": "wsgw",
+   "to": "ingest",
+   "label": "gRPC stream",
+   "at": 0.5,
+   "dx": -40,
+   "dy": -10
+  },
+  {
+   "id": "ig",
+   "from": "ingest",
+   "to": "geo",
+   "label": "GEOADD"
+  },
+  {
+   "id": "ik",
+   "from": "ingest",
+   "to": "kafka",
+   "label": "sample",
+   "dash": true,
+   "dx": 44
+  },
+  {
+   "id": "kh",
+   "from": "kafka",
+   "to": "history",
+   "label": "history",
+   "dash": true,
+   "dx": 46
+  },
+  {
+   "id": "ks",
+   "from": "kafka",
+   "to": "surge",
+   "label": "count / cell",
+   "dash": true,
+   "dy": -14
+  },
+  {
+   "id": "sg",
+   "from": "surge",
+   "to": "geo",
+   "label": "SET surge",
+   "at": 0.5,
+   "dx": -50
+  },
+  {
+   "id": "ra",
+   "from": "rider",
+   "to": "api",
+   "label": "HTTPS",
+   "kind": "read"
+  },
+  {
+   "id": "am",
+   "from": "api",
+   "to": "matching",
+   "label": "gRPC",
+   "kind": "read",
+   "at": 0.5
+  },
+  {
+   "id": "mg",
+   "from": "matching",
+   "to": "geo",
+   "label": "GEOSEARCH",
+   "kind": "read",
+   "at": 0.2,
+   "dx": -58
+  },
+  {
+   "id": "mr",
+   "from": "matching",
+   "to": "routing",
+   "label": "ETA top 5",
+   "kind": "read",
+   "at": 0.35,
+   "dx": -54,
+   "dy": 6
+  },
+  {
+   "id": "md",
+   "from": "matching",
+   "to": "dispatch",
+   "label": "gRPC top 3",
+   "kind": "read",
+   "at": 0.5,
+   "dy": 16
+  },
+  {
+   "id": "dpg",
+   "from": "dispatch",
+   "to": "pg",
+   "label": "offers · UPDATE",
+   "kind": "read",
+   "at": 0.3,
+   "dy": 16
+  },
+  {
+   "id": "dws",
+   "from": "dispatch",
+   "to": "wsgw",
+   "label": "Redis Pub/Sub",
+   "kind": "read",
+   "at": 0.5,
+   "dx": -62,
+   "dy": 14
+  },
+  {
+   "id": "dt",
+   "from": "dispatch",
+   "to": "trip",
+   "label": "gRPC",
+   "kind": "read"
+  },
+  {
+   "id": "tp",
+   "from": "trip",
+   "to": "pg",
+   "label": "UPDATE rides",
+   "kind": "read",
+   "at": 0.5,
+   "dx": 70
+  },
+  {
+   "id": "tk",
+   "from": "trip",
+   "to": "kafka",
+   "label": "events",
+   "dash": true,
+   "via": [
+    [
+     790,
+     600
+    ]
+   ],
+   "at": 0.5,
+   "dx": 8,
+   "dy": 0
+  }
+ ],
+ "scenes": [
+  {
+   "id": "arch",
+   "chapter": "Architecture",
+   "kicker": "01 · The map",
+   "title": "Seven services around one hot index",
+   "steps": [
+    {
+     "cap": "The write path: drivers push GPS points over an open WebSocket, Location Ingest cleans them and updates the hot Redis GEO index, sharded by city or H3 cell, last position only.",
+     "focus": [
+      "driver",
+      "wsgw",
+      "ingest",
+      "geo"
+     ],
+     "title": "Write path",
+     "proto": [
+      "WSS",
+      "gRPC stream",
+      "Redis GEO"
+     ],
+     "note": "An update <b>in place</b>, not a new row: that is what makes 1.25 million writes per second cheap. The index is derived and rebuilds itself in ~10 s."
+    },
+    {
+     "cap": "A sampled copy goes through Kafka to Cassandra for the trip history and to the Surge Aggregator, which counts demand against free drivers per cell.",
+     "focus": [
+      "kafka",
+      "history",
+      "surge"
+     ],
+     "tone": "async",
+     "title": "Async path",
+     "proto": [
+      "Kafka location-updates",
+      "1 point per 10-15 s"
+     ],
+     "note": "History is a sample, not every update. Nothing on this path is in the request budget of a search."
+    },
+    {
+     "cap": "The read path: a rider asks for a car, Matching queries the same index, gets real ETAs only for the top candidates, Dispatch makes exactly one driver win, and Trip Service owns the ride in Postgres, the system of record that never sits in the hot location path.",
+     "focus": [
+      "rider",
+      "api",
+      "matching",
+      "routing",
+      "dispatch",
+      "trip",
+      "pg"
+     ],
+     "tone": "read",
+     "title": "Read path",
+     "proto": [
+      "HTTPS REST",
+      "gRPC",
+      "SQL conditional UPDATE"
+     ],
+     "note": "Postgres is the truth for money and state. It sees rides and offers, never 1.25 million locations per second."
+    }
+   ]
+  },
+  {
+   "id": "loc",
+   "chapter": "Driver location",
+   "kicker": "02 · Scenario 1",
+   "title": "A driver sends a position",
+   "steps": [
+    {
+     "cap": "The driver app keeps a WebSocket open to WS Gateway and every 4 seconds sends driver_id, latitude, longitude and a timestamp on that connection. A new HTTP request each time, with TCP and TLS handshakes, would cost more than the data itself.",
+     "say": "The driver app keeps a websocket open to W S Gateway and every four seconds sends the driver I D, latitude, longitude and a timestamp on that connection. A new H T T P request each time, with T C P and T L S handshakes, would cost more than the data itself.",
+     "edges": [
+      "dw"
+     ],
+     "proto": [
+      "WSS · long-lived",
+      "every 4 s",
+      "L4 load balancer"
+     ],
+     "code": "WS → { driver_id: 'd-8812', lat: 42.6977,\n       lng: 23.3219, ts: 1760350800 }",
+     "note": "5 million drivers / 4 s ≈ <b>1.25 M messages per second</b> into the gateways.",
+     "mark": {
+      "node": "wsgw",
+      "text": "1.25M msg/s",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "WS Gateway forwards every point over a gRPC stream to Location Ingest: one open stream per gateway process, not a request per point.",
+     "say": "W S Gateway forwards every point over a G R P C stream to Location Ingest: one open stream per gateway process, not a request per point.",
+     "edges": [
+      "wi"
+     ],
+     "proto": [
+      "gRPC client stream"
+     ],
+     "code": "stream LocationUpdate { driver_id, lat, lng, ts }\n→ Ingest.Report(stream)"
+    },
+    {
+     "cap": "Ingest drops impossible jumps, a point that would mean 300 km/h, snaps the coordinate to the nearest road, and computes the H3 cell at resolution 8, about 0.7 square kilometres.",
+     "say": "Ingest drops impossible jumps, a point that would mean three hundred kilometres per hour, snaps the coordinate to the nearest road, and computes the H three cell at resolution eight, about zero point seven square kilometres.",
+     "focus": [
+      "ingest"
+     ],
+     "title": "Location Ingest cleans the point",
+     "proto": [
+      "jump filter",
+      "map matching",
+      "H3 res 8"
+     ],
+     "code": "if (speed(prev, cur) > 300 km/h) drop\ncur  = mapMatch(cur)            // nearest road\ncell = h3.latLngToCell(lat, lng, 8)",
+     "mark": {
+      "node": "ingest",
+      "text": "cell 88283…",
+      "kind": "sync"
+     }
+    },
+    {
+     "cap": "Same cell as last time: GEOADD updates the driver's position in place, no new row. The entry carries a TTL of about 30 seconds, so a driver who goes silent disappears from the index by himself.",
+     "say": "Same cell as last time: geo add updates the driver's position in place, no new row. The entry carries a T T L of about thirty seconds, so a driver who goes silent disappears from the index by himself.",
+     "edges": [
+      "ig"
+     ],
+     "proto": [
+      "GEOADD",
+      "TTL 30 s",
+      "shard per region"
+     ],
+     "code": "GEOADD geo:drivers:88283082b 23.3219 42.6977 d-8812\nEXPIRE geo:drivers:88283082b 30   -- refreshed per write",
+     "note": "Redis GEO is a geohash in a sorted set: the 2D position becomes one sortable number.",
+     "mark": {
+      "node": "geo",
+      "text": "updated in place",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "If the driver crossed into a neighbouring cell, a Lua script removes him from the old cell and adds him to the new one atomically, so there is no moment when he is in two cells or in none.",
+     "edges": [
+      "ig"
+     ],
+     "title": "Crossing a cell border",
+     "proto": [
+      "Redis Lua · atomic"
+     ],
+     "code": "EVAL \"redis.call('ZREM', KEYS[1], ARGV[1])\n      redis.call('GEOADD', KEYS[2], ...)\" \n     2 geo:drivers:<old> geo:drivers:<new> d-8812",
+     "mark": {
+      "node": "geo",
+      "text": "moved · 1 cell",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Separately, every 10 to 15 seconds, not every 4, one point is published to Kafka location-updates, keyed by driver_id. Cassandra keeps the trip history from it, and the Surge Aggregator counts free drivers per cell in a sliding window.",
+     "say": "Separately, every ten to fifteen seconds, not every four, one point is published to Kafka location updates, keyed by driver I D. Cassandra keeps the trip history from it, and the Surge Aggregator counts free drivers per cell in a sliding window.",
+     "edges": [
+      "ik",
+      "kh",
+      "ks"
+     ],
+     "tone": "async",
+     "title": "Ingest → Kafka → history, surge",
+     "proto": [
+      "Kafka · key driver_id",
+      "1 in 3 points"
+     ],
+     "code": "produce location-updates key=d-8812 { trip_id, lat, lng, ts }\nCassandra: INSERT trip_points (trip_id, ts, lat, lng)\nsurge:     free[cell] += 1   -- sliding window",
+     "marks": [
+      {
+       "node": "history",
+       "text": "trip points",
+       "kind": "async"
+      },
+      {
+       "node": "surge",
+       "text": "12 free / 31 requests",
+       "kind": "async"
+      }
+     ]
+    },
+    {
+     "cap": "The aggregator writes a surge multiplier per cell back into Redis, where Matching and pricing read it.",
+     "edges": [
+      "sg"
+     ],
+     "tone": "async",
+     "proto": [
+      "Redis SET"
+     ],
+     "code": "SET surge:88283082b 1.4   -- 31 requests / 12 free drivers",
+     "mark": {
+      "node": "geo",
+      "text": "surge 1.4×",
+      "kind": "async"
+     }
+    }
+   ]
+  },
+  {
+   "id": "ride",
+   "chapter": "Rider requests",
+   "kicker": "03 · Scenario 2",
+   "title": "A rider asks for a car",
+   "steps": [
+    {
+     "cap": "The rider presses Order. POST /rides with her coordinates passes through API Gateway, which authenticates and rate-limits, and reaches Matching Service over gRPC.",
+     "say": "The rider presses Order. Post slash rides with her coordinates passes through A P I Gateway, which authenticates and rate-limits, and reaches Matching Service over G R P C.",
+     "edges": [
+      "ra",
+      "am"
+     ],
+     "title": "Rider → API Gateway → Matching",
+     "proto": [
+      "HTTPS REST",
+      "gRPC"
+     ],
+     "code": "POST /rides { lat: 42.6950, lng: 23.3300, car: 'xl' }\n→ gRPC Matching.Find(rider, car: 'xl')"
+    },
+    {
+     "cap": "Matching computes the rider's cell and runs GEOSEARCH within 3 km on that cell plus its 8 neighbours. The neighbours are mandatory: a driver 200 metres away may sit just across the cell border.",
+     "say": "Matching computes the rider's cell and runs geo search within three kilometres on that cell plus its eight neighbours. The neighbours are mandatory: a driver two hundred metres away may sit just across the cell border.",
+     "edges": [
+      "mg"
+     ],
+     "proto": [
+      "GEOSEARCH",
+      "cell + 8 neighbours (kRing)"
+     ],
+     "code": "cell = h3.latLngToCell(rider, 8)\nfor (c of [cell, ...h3.gridDisk(cell, 1)])\n  GEOSEARCH geo:drivers:c FROMLONLAT 23.33 42.695\n            BYRADIUS 3 km ASC WITHDIST",
+     "mark": {
+      "node": "geo",
+      "text": "40 candidates",
+      "kind": "read"
+     }
+    },
+    {
+     "cap": "Nobody within 3 km? The radius widens to 5, then 10 km. With 40 candidates sorted by straight-line distance, the cheap filters run first: free, right car type, rating, not driving away on a motorway. Twelve remain.",
+     "say": "Nobody within three kilometres? The radius widens to five, then ten kilometres. With forty candidates sorted by straight-line distance, the cheap filters run first: free, right car type, rating, not driving away on a motorway. Twelve remain.",
+     "focus": [
+      "matching"
+     ],
+     "tone": "read",
+     "title": "Matching filters cheaply first",
+     "proto": [
+      "radius 3 → 5 → 10 km",
+      "cheap filters"
+     ],
+     "code": "candidates.filter(d => d.free && d.car == 'xl'\n  && d.rating >= 4.6 && !d.onHighwayAway)\n→ 12 left",
+     "mark": {
+      "node": "matching",
+      "text": "12 candidates",
+      "kind": "read"
+     }
+    },
+    {
+     "cap": "Only for the top 5 does Matching ask the Routing Engine for a real ETA on the road network. Tens of milliseconds per call, so never for all 40.",
+     "say": "Only for the top five does Matching ask the Routing Engine for a real E T A on the road network. Tens of milliseconds per call, so never for all forty.",
+     "edges": [
+      "mr"
+     ],
+     "proto": [
+      "HTTPS / gRPC",
+      "most expensive step"
+     ],
+     "code": "Routing.ETA(driver, rider) × 5     -- ~30 ms each\n→ 3, 4, 6, 7, 9 min",
+     "mark": {
+      "node": "routing",
+      "text": "5 ETAs",
+      "kind": "read"
+     }
+    },
+    {
+     "cap": "The best 3 go to Dispatch Service over gRPC. Dispatch inserts an offer per driver with status OFFERED and a 15-second expiry in Postgres.",
+     "say": "The best three go to Dispatch Service over G R P C. Dispatch inserts an offer per driver with status offered and a fifteen-second expiry in Postgres.",
+     "edges": [
+      "md",
+      "dpg"
+     ],
+     "title": "Matching → Dispatch → Postgres",
+     "proto": [
+      "gRPC",
+      "SQL INSERT"
+     ],
+     "code": "INSERT INTO offers (ride, driver, status, expires_at)\nVALUES (501, 'd-8812', 'OFFERED', now() + 15 s),\n       (501, 'd-2207', ...), (501, 'd-9140', ...)",
+     "mark": {
+      "node": "pg",
+      "text": "3 offers OFFERED",
+      "kind": "read"
+     }
+    },
+    {
+     "cap": "The offer is pushed to all three drivers at once: Dispatch publishes on the Redis Pub/Sub channel of each driver's WS server, and WS Gateway writes it into the right socket. If nobody accepts within 15 seconds, the offers expire and Matching searches again with a wider radius.",
+     "say": "The offer is pushed to all three drivers at once: Dispatch publishes on the Redis pub sub channel of each driver's websocket server, and W S Gateway writes it into the right socket. If nobody accepts within fifteen seconds, the offers expire and Matching searches again with a wider radius.",
+     "edges": [
+      "dws",
+      "-dw"
+     ],
+     "title": "Dispatch → WS Gateway → drivers",
+     "proto": [
+      "Redis PUBLISH",
+      "WebSocket push",
+      "expires 15 s"
+     ],
+     "code": "PUBLISH ws:<server_id> { driver: 'd-8812', offer: 501 }\nWS → { type: 'offer', ride: 501, pickup, fare, ttl: 15 }",
+     "mark": {
+      "node": "driver",
+      "text": "offer · 15 s",
+      "kind": "read"
+     }
+    }
+   ]
+  },
+  {
+   "id": "accept",
+   "chapter": "Two accept at once",
+   "kicker": "04 · Scenario 3",
+   "title": "Two drivers accept at the same time",
+   "steps": [
+    {
+     "cap": "Driver B presses Accept first, by 200 milliseconds. The app sends accept over the WebSocket, and WS Gateway forwards it to Dispatch.",
+     "say": "Driver B presses Accept first, by two hundred milliseconds. The app sends accept over the websocket, and W S Gateway forwards it to Dispatch.",
+     "edges": [
+      "dw",
+      "-dws"
+     ],
+     "title": "Driver B → WS Gateway → Dispatch",
+     "proto": [
+      "WebSocket",
+      "gRPC"
+     ],
+     "code": "WS ← { type: 'accept', ride: 501, driver: 'B' }\n→ Dispatch.Accept(501, 'B')"
+    },
+    {
+     "cap": "Dispatch runs a conditional UPDATE: set the offer to ACCEPTED only where the ride is still OFFERED. Postgres answers 'one row affected': B wins. In the same transaction it also claims the driver, so B cannot be in two rides.",
+     "say": "Dispatch runs a conditional update: set the offer to accepted only where the ride is still offered. Postgres answers one row affected: B wins. In the same transaction it also claims the driver, so B cannot be in two rides.",
+     "edges": [
+      "dpg"
+     ],
+     "proto": [
+      "conditional UPDATE",
+      "one transaction"
+     ],
+     "code": "UPDATE offers SET status = 'ACCEPTED', driver = 'B'\n WHERE ride = 501 AND status = 'OFFERED';   -- 1 row\nUPDATE drivers SET current_ride = 501\n WHERE id = 'B' AND current_ride IS NULL;   -- 1 row",
+     "mark": {
+      "node": "pg",
+      "text": "B · 1 row ✓",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Driver A's accept arrives next. The same UPDATE affects 0 rows, because the status is no longer OFFERED, and A gets 'already taken'. No SELECT before the UPDATE, no distributed lock: the row count is the answer. C's offer is withdrawn.",
+     "say": "Driver A's accept arrives next. The same update affects zero rows, because the status is no longer offered, and A gets already taken. No select before the update, no distributed lock: the row count is the answer. C's offer is withdrawn.",
+     "edges": [
+      "dw",
+      "-dws",
+      "dpg!"
+     ],
+     "tone": "bad",
+     "title": "Driver A: 0 rows affected",
+     "proto": [
+      "same UPDATE",
+      "0 rows → taken"
+     ],
+     "code": "same UPDATE ... WHERE status = 'OFFERED' → 0 rows\nWS → A { type: 'offer_taken', ride: 501 }\nWS → C { type: 'offer_withdrawn', ride: 501 }",
+     "mark": {
+      "node": "driver",
+      "text": "A: already taken",
+      "kind": "bad"
+     }
+    },
+    {
+     "cap": "Dispatch calls Trip Service over gRPC. Trip creates the ride in state ACCEPTED in Postgres, the system of record for money and state.",
+     "say": "Dispatch calls Trip Service over G R P C. Trip creates the ride in state accepted in Postgres, the system of record for money and state.",
+     "edges": [
+      "dt",
+      "tp"
+     ],
+     "tone": "good",
+     "title": "Dispatch → Trip → Postgres",
+     "proto": [
+      "gRPC",
+      "SQL INSERT"
+     ],
+     "code": "Trip.Create(ride: 501, driver: 'B')\nINSERT INTO rides (id, driver, status)\nVALUES (501, 'B', 'ACCEPTED')",
+     "mark": {
+      "node": "pg",
+      "text": "ride 501 ACCEPTED",
+      "kind": "good"
+     }
+    },
+    {
+     "cap": "Trip Service publishes the transition to Kafka trip-events. Pricing, the notifications to both sides and reporting are fed from there, never from the hot path.",
+     "edges": [
+      "tk"
+     ],
+     "tone": "async",
+     "proto": [
+      "Kafka trip-events"
+     ],
+     "code": "produce trip-events key=501\n  { ride: 501, from: 'OFFERED', to: 'ACCEPTED', ts }",
+     "mark": {
+      "node": "kafka",
+      "text": "trip-events",
+      "kind": "async"
+     }
+    },
+    {
+     "cap": "Every later transition, ARRIVING, IN_TRIP, COMPLETED, is again a conditional UPDATE on the expected state, so 'I have arrived' from the driver and 'cancel' from the rider in the same second cannot produce an invalid state. Meanwhile the rider sees B's position and ETA streamed from the same index.",
+     "say": "Every later transition, arriving, in trip, completed, is again a conditional update on the expected state, so I have arrived from the driver and cancel from the rider in the same second cannot produce an invalid state. Meanwhile the rider sees B's position and E T A streamed from the same index.",
+     "focus": [
+      "trip",
+      "pg",
+      "rider"
+     ],
+     "tone": "good",
+     "title": "State machine with conditional UPDATEs",
+     "proto": [
+      "expected state",
+      "0 rows → ignore"
+     ],
+     "code": "UPDATE rides SET status = 'IN_TRIP'\n WHERE id = 501 AND status = 'ARRIVING';   -- 0 rows → reject\nrider ← { driver: 'B', eta: 4 min, pos: … }   -- from Redis GEO",
+     "mark": {
+      "node": "rider",
+      "text": "ETA 4 min",
+      "kind": "good"
+     }
+    }
+   ]
+  }
+ ],
+ "recap": {
+  "chapter": "Recap",
+  "title": "What to say in the interview",
+  "closing": "The index is derived and disposable.<br><em>Postgres is the truth.</em>",
+  "items": [
+   {
+    "text": "2D → 1D: geohash / H3 cell index, cell + neighbours on every search",
+    "kind": "sync",
+    "cap": "To sum up. Two dimensions become one: a geohash or H3 cell index, and every search reads the cell plus its neighbours.",
+    "say": "To sum up. Two dimensions become one: a geohash or H three cell index, and every search reads the cell plus its neighbours."
+   },
+   {
+    "text": "Write path in memory: GEOADD in place, TTL 30 s, sampled copy via Kafka",
+    "kind": "sync",
+    "cap": "The write path stays in memory: GEOADD in place with a 30-second TTL, and only a sampled copy goes through Kafka.",
+    "say": "The write path stays in memory: geo add in place with a thirty-second T T L, and only a sampled copy goes through Kafka."
+   },
+   {
+    "text": "Read path: cheap filters first, real ETA only for the top 5",
+    "kind": "read",
+    "cap": "On the read path the cheap filters run first, and the expensive routing ETA is computed only for the top five.",
+    "say": "On the read path the cheap filters run first, and the expensive routing E T A is computed only for the top five."
+   },
+   {
+    "text": "Conditional UPDATE decides dispatch: the row count, not a lock",
+    "kind": "good",
+    "cap": "A conditional UPDATE decides who gets the ride: the row count is the answer, not a distributed lock.",
+    "say": "A conditional update decides who gets the ride: the row count is the answer, not a distributed lock."
+   },
+   {
+    "text": "Postgres is the truth for money and state, never in the hot location path",
+    "kind": "async",
+    "cap": "And Postgres is the truth for money and state, but it never sits in the hot location path. The index is derived and disposable. Postgres is the truth."
+   }
+  ]
+ }
+}
