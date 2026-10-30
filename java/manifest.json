@@ -1,0 +1,34 @@
+{
+  "title": "Java",
+  "lead": "Подготовка за интервю по Java и Spring Boot: как работят езикът, JVM, колекциите и нишките, и какво прави Spring Boot под капака. Акцентът е върху въпросите, по които интервюиращите копаят: памет и GC, equals и hashCode, HashMap отвътре, Java Memory Model, virtual threads, proxies, @Transactional и JPA. Всеки документ е кратък, последователен и с диаграма.",
+  "pages": [
+    { "file": "JVM.md", "slug": "jvm", "group": "Модул 1: Езикът и JVM", "short": "1.1 JVM, bytecode и JIT", "blurb": "JDK, JRE, JVM. Class loading, интерпретатор, JIT компилация, warm-up." },
+    { "file": "Memory_GC.md", "slug": "memory", "group": "Модул 1: Езикът и JVM", "short": "1.2 Памет и Garbage Collection", "blurb": "Stack, heap, metaspace. Поколения, G1, ZGC, OutOfMemoryError." },
+    { "file": "Types_Strings.md", "slug": "types", "group": "Модул 1: Езикът и JVM", "short": "1.3 Типове, boxing и String", "blurb": "Примитиви и обекти, autoboxing, Integer cache, String pool, pass-by-value." },
+    { "file": "Equals_HashCode.md", "slug": "equals", "group": "Модул 1: Езикът и JVM", "short": "1.4 equals, hashCode, Comparable", "blurb": "Договорите, == срещу equals, какво се чупи в HashMap и TreeSet." },
+    { "file": "Classes_Records.md", "slug": "classes", "group": "Модул 1: Езикът и JVM", "short": "1.5 Класове, records, sealed, enums", "blurb": "Interface и abstract клас, record, sealed, pattern matching в switch." },
+    { "file": "Generics.md", "slug": "generics", "group": "Модул 1: Езикът и JVM", "short": "1.6 Generics и type erasure", "blurb": "Wildcards, PECS, защо List<Object> не е List<String>, erasure." },
+    { "file": "Exceptions.md", "slug": "exceptions", "group": "Модул 1: Езикът и JVM", "short": "1.7 Изключения", "blurb": "Checked срещу unchecked, try-with-resources, finally, йерархията." },
+
+    { "file": "Collections.md", "slug": "collections", "group": "Модул 2: Колекции и структури от данни", "short": "2.1 Collections Framework", "blurb": "List, Set, Map, Queue: имплементации, сложност, кога коя." },
+    { "file": "HashMap.md", "slug": "hashmap", "group": "Модул 2: Колекции и структури от данни", "short": "2.2 HashMap отвътре", "blurb": "Buckets, hash, колизии, дървета, resize, load factor." },
+    { "file": "Lists_Queues.md", "slug": "lists", "group": "Модул 2: Колекции и структури от данни", "short": "2.3 ArrayList, LinkedList, Deque, PriorityQueue", "blurb": "Масив срещу свързан списък, растеж, ArrayDeque, heap." },
+    { "file": "Streams.md", "slug": "streams", "group": "Модул 2: Колекции и структури от данни", "short": "2.4 Lambdas, Streams, Optional", "blurb": "Функционални интерфейси, мързеливи pipelines, collectors, parallel." },
+
+    { "file": "Threads.md", "slug": "threads", "group": "Модул 3: Конкурентност", "short": "3.1 Нишки и жизнен цикъл", "blurb": "Thread, Runnable, състояния, join, interrupt, daemon." },
+    { "file": "JMM.md", "slug": "jmm", "group": "Модул 3: Конкурентност", "short": "3.2 Java Memory Model", "blurb": "Видимост, преподреждане, happens-before, volatile, synchronized." },
+    { "file": "Locks_Atomics.md", "slug": "locks", "group": "Модул 3: Конкурентност", "short": "3.3 Locks, atomics, конкурентни колекции", "blurb": "ReentrantLock, AtomicInteger, CAS, ConcurrentHashMap, deadlock." },
+    { "file": "Executors.md", "slug": "executors", "group": "Модул 3: Конкурентност", "short": "3.4 ExecutorService и CompletableFuture", "blurb": "Thread pools, опашки, Future, асинхронни вериги." },
+    { "file": "Virtual_Threads.md", "slug": "virtual-threads", "group": "Модул 3: Конкурентност", "short": "3.5 Virtual threads", "blurb": "Java 21: carrier threads, mount и unmount, pinning, кога помагат." },
+
+    { "file": "Spring_IoC.md", "slug": "ioc", "group": "Модул 4: Spring Boot под капака", "short": "4.1 IoC контейнер и beans", "blurb": "ApplicationContext, BeanDefinition, DI, жизнен цикъл, scopes." },
+    { "file": "Spring_Boot_Startup.md", "slug": "autoconfig", "group": "Модул 4: Spring Boot под капака", "short": "4.2 Стартиране и auto-configuration", "blurb": "SpringApplication.run, @Conditional, starters, embedded Tomcat." },
+    { "file": "Spring_AOP.md", "slug": "aop", "group": "Модул 4: Spring Boot под капака", "short": "4.3 AOP и proxies", "blurb": "JDK и CGLIB proxy, защо self-invocation заобикаля @Transactional." },
+    { "file": "Spring_Transactions.md", "slug": "transactions", "group": "Модул 4: Spring Boot под капака", "short": "4.4 @Transactional отвътре", "blurb": "Propagation, isolation, rollback правила, readOnly, капани." },
+    { "file": "JPA_Hibernate.md", "slug": "jpa", "group": "Модул 4: Spring Boot под капака", "short": "4.5 JPA и Hibernate", "blurb": "Persistence context, dirty checking, lazy loading, N+1." },
+    { "file": "Spring_MVC.md", "slug": "mvc", "group": "Модул 4: Spring Boot под капака", "short": "4.6 Пътят на HTTP заявката", "blurb": "Tomcat, filters, DispatcherServlet, interceptors, нишка на заявка." },
+
+    { "file": "Cheatsheet.md", "slug": "cheatsheet", "group": "Преговор", "short": "Бърз преговор", "blurb": "Най-важното от всички теми на една страница, за последните 15 минути преди интервюто." }
+  ],
+  "external": []
+}
