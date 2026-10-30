@@ -1,0 +1,30 @@
+{
+  "title": "Node.js",
+  "lead": "Подготовка за интервю по Node.js: как работи runtime-ът под капака и защо се държи така. Най-много място е отделено на event loop-а: всяка фаза, process.nextTick и микрозадачите, кое след кое се изпълнява и как една операция стига от JavaScript до libuv и обратно. Всеки документ е кратък, последователен и с диаграма на потока.",
+  "pages": [
+    { "file": "Architecture.md", "slug": "architecture", "group": "Модул 1: Архитектура и Event Loop", "short": "1.1 Архитектура: V8 и libuv", "blurb": "Една JS нишка, V8, libuv, C++ bindings. Какво е single-threaded и какво не е." },
+    { "file": "Event_Loop.md", "slug": "event-loop", "group": "Модул 1: Архитектура и Event Loop", "short": "1.2 Event Loop: фазите", "blurb": "Timers, pending, idle/prepare, poll, check, close. Какво прави всяка фаза и кога loop-ът спи." },
+    { "file": "Microtasks.md", "slug": "microtasks", "group": "Модул 1: Архитектура и Event Loop", "short": "1.3 nextTick и микрозадачи", "blurb": "process.nextTick, Promise, queueMicrotask. Двете опашки, кога се изпразват и защо nextTick е първи." },
+    { "file": "Execution_Order.md", "slug": "order", "group": "Модул 1: Архитектура и Event Loop", "short": "1.4 Ред на изпълнение", "blurb": "Задачите \"какво ще отпечата\" от интервютата, решени стъпка по стъпка." },
+    { "file": "Libuv.md", "slug": "libuv", "group": "Модул 1: Архитектура и Event Loop", "short": "1.5 libuv и thread pool", "blurb": "Пътят на fs.readFile от JS до нишка в pool-а и обратно. epoll/kqueue за мрежата, UV_THREADPOOL_SIZE." },
+    { "file": "Blocking.md", "slug": "blocking", "group": "Модул 1: Архитектура и Event Loop", "short": "1.6 Блокиране на event loop-а", "blurb": "Защо един тежък цикъл спира всички заявки. Как се измерва и как се разделя работата." },
+    { "file": "Concurrency.md", "slug": "concurrency", "group": "Модул 1: Архитектура и Event Loop", "short": "1.7 Child processes, Workers, Cluster", "blurb": "Процеси срещу нишки, IPC, SharedArrayBuffer, кога кое и колко струва." },
+
+    { "file": "Buffers.md", "slug": "buffers", "group": "Модул 2: Данни и I/O", "short": "2.1 Buffers и бинарни данни", "blurb": "Buffer като Uint8Array, памет извън V8 heap, alloc срещу allocUnsafe, encodings." },
+    { "file": "Streams.md", "slug": "streams", "group": "Модул 2: Данни и I/O", "short": "2.2 Streams и backpressure", "blurb": "Readable, Writable, Duplex, Transform, highWaterMark, pipeline, drain." },
+    { "file": "File_System.md", "slug": "fs", "group": "Модул 2: Данни и I/O", "short": "2.3 File System и async I/O", "blurb": "Sync, callback и promises API, кога кое, файловете през thread pool-а." },
+    { "file": "Event_Emitter.md", "slug": "events", "group": "Модул 2: Данни и I/O", "short": "2.4 EventEmitter", "blurb": "Синхронен emit, събитието error, изтичане на listeners, events.once." },
+    { "file": "HTTP_Server.md", "slug": "http", "group": "Модул 2: Данни и I/O", "short": "2.5 HTTP сървърът под капака", "blurb": "От TCP пакет до твоя handler: accept, llhttp, keep-alive, timeouts." },
+
+    { "file": "Async_Patterns.md", "slug": "async", "group": "Модул 3: Код и изпълнение", "short": "3.1 Асинхронни модели", "blurb": "Callbacks, Promises, async/await, паралелно срещу последователно, AbortSignal." },
+    { "file": "Modules.md", "slug": "modules", "group": "Модул 3: Код и изпълнение", "short": "3.2 CommonJS и ES Modules", "blurb": "require срещу import, module wrapper, кеш, циклични зависимости, interop." },
+    { "file": "Memory_GC.md", "slug": "memory", "group": "Модул 3: Код и изпълнение", "short": "3.3 Памет и Garbage Collection", "blurb": "V8 heap, young и old generation, Scavenge, Mark-Compact, изтичане на памет." },
+
+    { "file": "Errors_Shutdown.md", "slug": "errors", "group": "Модул 4: Production и надеждност", "short": "4.1 Грешки и graceful shutdown", "blurb": "Operational срещу programmer грешки, uncaughtException, unhandledRejection, SIGTERM." },
+    { "file": "Security.md", "slug": "security", "group": "Модул 4: Production и надеждност", "short": "4.2 Сигурност", "blurb": "Prototype pollution, ReDoS, command injection, path traversal, зависимости." },
+    { "file": "Performance.md", "slug": "performance", "group": "Модул 4: Production и надеждност", "short": "4.3 Мониторинг и debugging", "blurb": "--inspect, CPU профил, heap snapshot, event loop delay и utilization." },
+
+    { "file": "Cheatsheet.md", "slug": "cheatsheet", "group": "Преговор", "short": "Бърз преговор", "blurb": "Най-важното от всички теми на една страница, за последните 15 минути преди интервюто." }
+  ],
+  "external": []
+}
