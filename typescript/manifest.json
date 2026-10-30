@@ -1,0 +1,32 @@
+{
+  "title": "TypeScript",
+  "lead": "Подготовка за интервю по TypeScript: как работи типовата система и защо се държи така. Най-много място е отделено на това, което отличава средно от силно ниво: структурно типизиране, narrowing, generics, conditional и mapped типове, infer и variance. Всеки документ е кратък, последователен и с диаграма.",
+  "pages": [
+    { "file": "What_Is_TS.md", "slug": "compiler", "group": "Модул 1: Типовата система", "short": "1.1 Компилаторът и type erasure", "blurb": "Scanner, parser, binder, checker, emitter. Типовете изчезват при компилация." },
+    { "file": "Structural_Typing.md", "slug": "structural", "group": "Модул 1: Типовата система", "short": "1.2 Структурно типизиране", "blurb": "Форма, а не име. Excess property check, branded типове." },
+    { "file": "Type_Hierarchy.md", "slug": "hierarchy", "group": "Модул 1: Типовата система", "short": "1.3 any, unknown, never и йерархията", "blurb": "Типовете като множества. Top и bottom типове, union и intersection." },
+    { "file": "Type_vs_Interface.md", "slug": "type-interface", "group": "Модул 1: Типовата система", "short": "1.4 type срещу interface", "blurb": "Declaration merging, extends срещу &, кога кое." },
+    { "file": "Inference.md", "slug": "inference", "group": "Модул 1: Типовата система", "short": "1.5 Inference, widening, satisfies", "blurb": "let срещу const, as const, contextual typing, satisfies срещу as." },
+    { "file": "Narrowing.md", "slug": "narrowing", "group": "Модул 1: Типовата система", "short": "1.6 Narrowing и control flow", "blurb": "typeof, in, instanceof, discriminated unions, type guards, exhaustive never." },
+
+    { "file": "Generics.md", "slug": "generics", "group": "Модул 2: Generics и типове върху типове", "short": "2.1 Generics", "blurb": "Типови параметри, constraints, defaults, извеждане, const и NoInfer." },
+    { "file": "Type_Operators.md", "slug": "operators", "group": "Модул 2: Generics и типове върху типове", "short": "2.2 keyof, typeof, indexed access", "blurb": "Типове, изведени от стойности и от други типове." },
+    { "file": "Conditional_Types.md", "slug": "conditional", "group": "Модул 2: Generics и типове върху типове", "short": "2.3 Conditional types и infer", "blurb": "T extends U ? X : Y, дистрибутивност, infer, рекурсия." },
+    { "file": "Mapped_Types.md", "slug": "mapped", "group": "Модул 2: Generics и типове върху типове", "short": "2.4 Mapped и template literal типове", "blurb": "Обхождане на ключове, модификатори, преименуване с as." },
+    { "file": "Utility_Types.md", "slug": "utility", "group": "Модул 2: Generics и типове върху типове", "short": "2.5 Utility types отвътре", "blurb": "Partial, Pick, Omit, Record, ReturnType, Awaited: как са написани." },
+    { "file": "Variance.md", "slug": "variance", "group": "Модул 2: Generics и типове върху типове", "short": "2.6 Variance", "blurb": "Ковариантност, контравариантност, strictFunctionTypes, методи." },
+
+    { "file": "Classes.md", "slug": "classes", "group": "Модул 3: Език и екосистема", "short": "3.1 Класове", "blurb": "private срещу #private, abstract, parameter properties, implements." },
+    { "file": "Enums.md", "slug": "enums", "group": "Модул 3: Език и екосистема", "short": "3.2 Enums и алтернативи", "blurb": "Какво генерира enum, const enum, union от литерали, as const обект." },
+    { "file": "Modules_Declarations.md", "slug": "declarations", "group": "Модул 3: Език и екосистема", "short": "3.3 Модули и .d.ts файлове", "blurb": "declare, @types, module augmentation, moduleResolution." },
+    { "file": "Tsconfig.md", "slug": "tsconfig", "group": "Модул 3: Език и екосистема", "short": "3.4 tsconfig и strict", "blurb": "Strict флаговете, noUncheckedIndexedAccess, target, module, lib." },
+    { "file": "Decorators.md", "slug": "decorators", "group": "Модул 3: Език и екосистема", "short": "3.5 Decorators", "blurb": "Стандартните decorators от TS 5 срещу experimentalDecorators." },
+
+    { "file": "Runtime_Boundary.md", "slug": "runtime", "group": "Модул 4: Практика и production", "short": "4.1 Runtime граница и валидация", "blurb": "unknown на входа, zod, as срещу проверка, грешки в catch." },
+    { "file": "Build_Tooling.md", "slug": "build", "group": "Модул 4: Практика и production", "short": "4.2 Build и производителност", "blurb": "tsc срещу esbuild и swc, isolatedModules, type stripping в Node, project references." },
+    { "file": "Pitfalls.md", "slug": "pitfalls", "group": "Модул 4: Практика и production", "short": "4.3 Чести капани", "blurb": "Object.keys, индекси на масив, any, който се разлива, optional срещу undefined." },
+
+    { "file": "Cheatsheet.md", "slug": "cheatsheet", "group": "Преговор", "short": "Бърз преговор", "blurb": "Най-важното от всички теми на една страница, за последните 15 минути преди интервюто." }
+  ],
+  "external": []
+}
